@@ -39,7 +39,7 @@
 ### Конфиги
 Источник: открытый репозиторий [vpn-configs-for-russia](https://github.com/igareck/vpn-configs-for-russia) — автоматически обновляемый список VLESS-серверов (20-50 штук), проверяемый каждые 1-2 часа.
 
-Приложение скачивает файл с конфигами. Если интернет заблокирован — использует набор, вшитый в пакет при сборке.
+Приложение скачивает файл с конфигами. Если интернет заблокирован — использует набор, вшитый в бинарник при сборке.
 
 ### Тестирование, failover, выбор сервера
 Делает **sing-box нативно** через `urltest` outbound group:
@@ -58,49 +58,40 @@ sing-box поднимает HTTP API (`clash_api` на `127.0.0.1:9090`). При
 
 ## Архитектура
 
-Приложение = **генератор конфигов + процесс-менеджер + UI для статуса**. Вся VPN-логика — в sing-box.
+Приложение написано на **Go** — тот же язык что и sing-box. Это позволяет использовать sing-box как библиотеку напрямую, без управления отдельным процессом.
 
 ```
-┌─────────────────────────────────────────────┐
-│           Compose Multiplatform UI          │
-│    (один код → Android, iOS, macOS, Win)    │
-├─────────────────────────────────────────────┤
-│             Shared KMP Module               │
-│  ConfigFetcher, VlessParser,                │
-│  SingBoxConfigBuilder, ClashApiClient       │
-├──────────┬──────────┬─────────────────────────────┤
-│  Android │   iOS    │   macOS / Windows / Linux   │
-│VpnService│NetworkExt│      sing-box process       │
-│+ libbox  │+ libbox  │     + tun/wintun            │
-│  (.aar)  │(.xcfrmwk)│                             │
-└──────────┴──────────┴─────────────────────────────┘
-                      ↕ clash_api (HTTP)
-               ┌──────────────┐
-               │   sing-box   │
-               │  urltest     │ ← тестирование + failover
-               │  selector    │ ← ручной override
-               │  tun         │ ← kill switch
-               │  clash_api   │ ← статус для UI
-               └──────────────┘
+┌──────────────────────────────────────────────┐
+│              UI (Wails)                      │
+│     Go backend + HTML/CSS/JS frontend        │
+├──────────────────────────────────────────────┤
+│            autovpn-core (Go)                 │
+│  ConfigFetcher, VlessParser,                 │
+│  SingBoxConfigBuilder, ClashApiClient        │
+├──────────────────────────────────────────────┤
+│         sing-box (Go library)                │
+│  urltest, selector, tun, clash_api           │
+└──────────────────────────────────────────────┘
 ```
 
-**Shared (Kotlin Multiplatform)** — наш код:
-- Скачивание конфигов (Ktor) с fallback на CDN-зеркала
-- Парсинг VLESS URI
-- Генерация sing-box JSON-конфига (urltest + selector + tun + clash_api)
-- HTTP-клиент к clash_api для мониторинга
-- Bootstrapping: вшитые конфиги для первого запуска без интернета
+**Десктоп (Linux, macOS, Windows):**
+- Один Go-бинарник, sing-box встроен как библиотека
+- UI через Wails (Go + веб-фронтенд)
+- tun создаётся sing-box напрямую
+- Zero external dependencies
 
-**Platform-specific (expect/actual)** — тонкий слой:
-- Android: `VpnService` + libbox (.aar через gomobile)
-- iOS: `NetworkExtension` + libbox (.xcframework через gomobile)
-- macOS/Windows/Linux: sing-box как child process с tun/wintun интерфейсом
+**Мобильные (Android, iOS):**
+- Go-ядро компилируется через gomobile в .aar / .xcframework
+- Тонкая нативная обёртка:
+  - Android: Kotlin VpnService + autovpn-core.aar
+  - iOS: Swift NetworkExtension + autovpn-core.xcframework
+- Тот же подход что у sing-box-for-android / sing-box-for-apple
 
-**sing-box** — делает всю VPN-работу:
-- `urltest` — тестирование серверов, выбор лучшего, failover
-- `selector` — API для ручного override
-- `tun` + `strict_route` — kill switch
-- `clash_api` — HTTP API для мониторинга и управления
+**Преимущества Go:**
+- sing-box — Go библиотека, импортируется напрямую, без IPC
+- Нативный бинарник, zero runtime (~10-15MB вместо ~100MB с JVM)
+- gomobile для мобильных платформ — проверенный путь (sing-box так и делает)
+- Один язык для core + desktop app
 
 ---
 
@@ -160,7 +151,7 @@ sing-box поднимает HTTP API (`clash_api` на `127.0.0.1:9090`). При
 Пользователь ничего не замечает — приложение автоматически:
 1. Пробует GitHub → не доступен
 2. Пробует CDN-зеркала → не доступны
-3. Берёт конфиги, вшитые в пакет при сборке
+3. Берёт конфиги, вшитые в бинарник при сборке
 4. Подключается по вшитым конфигам
 5. Обновляет конфиги через VPN-туннель в фоне
 
@@ -179,10 +170,10 @@ sing-box поднимает HTTP API (`clash_api` на `127.0.0.1:9090`). При
 | | |
 |---|---|
 | Платформы | Android (API 26+), iOS (15+), macOS (12+), Windows (10+), Linux |
-| Язык | Kotlin Multiplatform |
-| UI | Compose Multiplatform + Material 3 |
-| HTTP | Ktor (кроссплатформенный) |
-| VPN-движок | sing-box (urltest + selector + tun + clash_api) |
+| Язык | Go |
+| UI (десктоп) | Wails (Go + HTML/CSS/JS) |
+| UI (мобильные) | Kotlin (Android) / Swift (iOS) — тонкая обёртка |
+| VPN-движок | sing-box (Go library, встроен в бинарник) |
 | Протокол | VLESS + Reality |
 | Источник серверов | GitHub repo (открытый, обновляется автоматически) |
 | Дистрибуция | Google Play, App Store, GitHub Releases, RuStore |
@@ -206,8 +197,8 @@ sing-box поднимает HTTP API (`clash_api` на `127.0.0.1:9090`). При
 ## Реализация — 6 шагов
 
 1. **Spike** — проверить sing-box вручную: VLESS + urltest + clash_api + tun
-2. **KMP-скелет** — Compose Multiplatform проект, Ktor, структура модулей
+2. **Go-скелет** — Go module, Wails проект, структура пакетов
 3. **Config Layer** — VlessParser, ConfigFetcher с fallback, SingBoxConfigBuilder
-4. **sing-box интеграция** — SingBoxController (process manager), ClashApiClient
-5. **UI** — Compose-экран, мониторинг через clash_api
-6. **Платформы** — Android (VpnService + libbox), iOS (NetworkExtension + libbox), Desktop (process + tun)
+4. **sing-box интеграция** — sing-box как Go library, запуск/остановка
+5. **UI** — Wails фронтенд, мониторинг через clash_api
+6. **Мобильные** — gomobile .aar/.xcframework, Android VpnService, iOS NetworkExtension
