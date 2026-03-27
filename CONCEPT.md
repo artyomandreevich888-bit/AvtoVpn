@@ -1,0 +1,213 @@
+# AutoVPN — pitch doc
+
+## Одна строка
+
+Кроссплатформенное приложение: нажал кнопку — весь трафик идёт через VPN. Без регистрации, без выбора серверов, без настроек. Android, iOS, macOS, Windows, Linux.
+
+---
+
+## Проблема
+
+Пользователь хочет VPN. Сейчас для этого нужно:
+1. Найти рабочий сервер (где? какой протокол?)
+2. Установить клиент (v2rayNG? NekoBox? sing-box?)
+3. Импортировать конфиг или подписку
+4. Понять что сервер сдох и повторить с п.1
+
+Это делают технари. Обычный пользователь — нет.
+
+## Решение
+
+Одно приложение, одна кнопка. Всё остальное — автоматически:
+
+```
+[ CONNECT ]
+     ↓
+Скачать конфиги → Запустить sing-box → Подключено
+     ↓                    ↓
+  (каждые 2ч)       sing-box сам:
+                    - тестирует серверы (urltest)
+                    - выбирает лучший по latency
+                    - переключает при отказе
+                    - kill switch (strict_route)
+```
+
+---
+
+## Как работает
+
+### Конфиги
+Источник: открытый репозиторий [vpn-configs-for-russia](https://github.com/igareck/vpn-configs-for-russia) — автоматически обновляемый список VLESS-серверов (20-50 штук), проверяемый каждые 1-2 часа.
+
+Приложение скачивает файл с конфигами. Если интернет заблокирован — использует набор, вшитый в пакет при сборке.
+
+### Тестирование, failover, выбор сервера
+Делает **sing-box нативно** через `urltest` outbound group:
+- Автоматически тестирует все серверы каждые 3 минуты
+- Выбирает с наименьшим latency
+- При отказе сервера — мгновенно переключается на следующий
+- Наше приложение только генерирует конфиг и запускает sing-box
+
+### Kill switch
+`strict_route: true` в конфиге tun — весь трафик устройства идёт в туннель на уровне ОС. Даже при падении sing-box правила маршрутизации остаются.
+
+### Мониторинг
+sing-box поднимает HTTP API (`clash_api` на `127.0.0.1:9090`). Приложение опрашивает его для UI: текущий сервер, latency, список серверов и их статус.
+
+---
+
+## Архитектура
+
+Приложение = **генератор конфигов + процесс-менеджер + UI для статуса**. Вся VPN-логика — в sing-box.
+
+```
+┌─────────────────────────────────────────────┐
+│           Compose Multiplatform UI          │
+│    (один код → Android, iOS, macOS, Win)    │
+├─────────────────────────────────────────────┤
+│             Shared KMP Module               │
+│  ConfigFetcher, VlessParser,                │
+│  SingBoxConfigBuilder, ClashApiClient       │
+├──────────┬──────────┬─────────────────────────────┤
+│  Android │   iOS    │   macOS / Windows / Linux   │
+│VpnService│NetworkExt│      sing-box process       │
+│+ libbox  │+ libbox  │     + tun/wintun            │
+│  (.aar)  │(.xcfrmwk)│                             │
+└──────────┴──────────┴─────────────────────────────┘
+                      ↕ clash_api (HTTP)
+               ┌──────────────┐
+               │   sing-box   │
+               │  urltest     │ ← тестирование + failover
+               │  selector    │ ← ручной override
+               │  tun         │ ← kill switch
+               │  clash_api   │ ← статус для UI
+               └──────────────┘
+```
+
+**Shared (Kotlin Multiplatform)** — наш код:
+- Скачивание конфигов (Ktor) с fallback на CDN-зеркала
+- Парсинг VLESS URI
+- Генерация sing-box JSON-конфига (urltest + selector + tun + clash_api)
+- HTTP-клиент к clash_api для мониторинга
+- Bootstrapping: вшитые конфиги для первого запуска без интернета
+
+**Platform-specific (expect/actual)** — тонкий слой:
+- Android: `VpnService` + libbox (.aar через gomobile)
+- iOS: `NetworkExtension` + libbox (.xcframework через gomobile)
+- macOS/Windows/Linux: sing-box как child process с tun/wintun интерфейсом
+
+**sing-box** — делает всю VPN-работу:
+- `urltest` — тестирование серверов, выбор лучшего, failover
+- `selector` — API для ручного override
+- `tun` + `strict_route` — kill switch
+- `clash_api` — HTTP API для мониторинга и управления
+
+---
+
+## UX
+
+### Первый запуск — флоу нового пользователя
+
+Никаких визардов, регистраций, настроек. Пользователь видит одну кнопку и нажимает её.
+
+**Шаг 1: Открыл приложение**
+```
+┌───────────────────────────────┐
+│                               │
+│         ◉  AutoVPN           │
+│      [   CONNECT   ]         │
+│                               │
+│                               │
+└───────────────────────────────┘
+```
+
+**Шаг 2: Нажал Connect — запрос прав (один раз, показывает ОС)**
+- Android: "AutoVPN wants to set up a VPN connection" → OK
+- iOS: "AutoVPN Would Like to Add VPN Configurations" → Allow → Face ID
+- Desktop: polkit / UAC / системный пароль для создания туннеля
+- Android 13+: дополнительно запрос на уведомления (нужны для foreground service)
+
+**Шаг 3: Подключение**
+```
+┌───────────────────────────────┐
+│                               │
+│         ◉  AutoVPN           │
+│     [ ··· CONNECTING ]        │
+│                               │
+│    Downloading configs...     │
+│                               │
+└───────────────────────────────┘
+```
+Под капотом: fetch конфигов → генерация sing-box JSON → запуск sing-box → urltest тестирует серверы.
+
+**Шаг 4: Подключено**
+```
+┌───────────────────────────────┐
+│                               │
+│         ◉  AutoVPN           │
+│      [  DISCONNECT  ]        │
+│                               │
+│    🇩🇪 Frankfurt  42ms       │
+│    5 / 23 servers available   │
+│                               │
+└───────────────────────────────┘
+```
+
+Весь флоу: **открыл → нажал → подтвердил → подключено**. 10 секунд.
+
+### Если интернет заблокирован при первом запуске
+
+Пользователь ничего не замечает — приложение автоматически:
+1. Пробует GitHub → не доступен
+2. Пробует CDN-зеркала → не доступны
+3. Берёт конфиги, вшитые в пакет при сборке
+4. Подключается по вшитым конфигам
+5. Обновляет конфиги через VPN-туннель в фоне
+
+### Повседневное использование
+
+- Мобильные: foreground-уведомление с кнопкой отключения
+- Десктоп: иконка в системном трее
+- Конфиги обновляются в фоне каждые 2 часа
+- Серверы тестируются sing-box каждые 3 минуты
+- При отказе сервера — мгновенное переключение, пользователь не замечает
+
+---
+
+## Стек
+
+| | |
+|---|---|
+| Платформы | Android (API 26+), iOS (15+), macOS (12+), Windows (10+), Linux |
+| Язык | Kotlin Multiplatform |
+| UI | Compose Multiplatform + Material 3 |
+| HTTP | Ktor (кроссплатформенный) |
+| VPN-движок | sing-box (urltest + selector + tun + clash_api) |
+| Протокол | VLESS + Reality |
+| Источник серверов | GitHub repo (открытый, обновляется автоматически) |
+| Дистрибуция | Google Play, App Store, GitHub Releases, RuStore |
+
+---
+
+## Чем отличается от v2rayNG / NekoBox
+
+| | v2rayNG / NekoBox | AutoVPN |
+|---|---|---|
+| Серверы | Найди и добавь сам | Встроенные, обновляются автоматически |
+| Выбор сервера | Вручную | Автоматически лучший (urltest) |
+| Сервер умер | Заметь и переключись | Автоматический failover (urltest) |
+| Kill switch | Нет / ручной | Всегда включён (strict_route) |
+| Настройка | Десятки параметров | Одна кнопка |
+| Платформы | Только Android | Android, iOS, macOS, Windows, Linux |
+| Целевая аудитория | Технари | Все |
+
+---
+
+## Реализация — 6 шагов
+
+1. **Spike** — проверить sing-box вручную: VLESS + urltest + clash_api + tun
+2. **KMP-скелет** — Compose Multiplatform проект, Ktor, структура модулей
+3. **Config Layer** — VlessParser, ConfigFetcher с fallback, SingBoxConfigBuilder
+4. **sing-box интеграция** — SingBoxController (process manager), ClashApiClient
+5. **UI** — Compose-экран, мониторинг через clash_api
+6. **Платформы** — Android (VpnService + libbox), iOS (NetworkExtension + libbox), Desktop (process + tun)
