@@ -84,6 +84,7 @@ func TestPrepareConfig(t *testing.T) {
 	defer srv.Close()
 
 	m := NewManager(newTestFetcher(srv.URL))
+	m.SkipPreValidate = true
 	configJSON, count, err := m.PrepareConfig(context.Background())
 	if err != nil {
 		t.Fatalf("PrepareConfig: %v", err)
@@ -308,6 +309,7 @@ func TestConnect_FullLifecycle_MockEngine(t *testing.T) {
 
 	m := NewManager(newTestFetcher(srv.URL))
 	m.Engine = mockEngine()
+	m.SkipPreValidate = true
 
 	err := m.Connect()
 	if err != nil {

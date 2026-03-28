@@ -32,11 +32,11 @@ func PatchMobileConfig(configJSON []byte, cacheDir string) ([]byte, error) {
 		}
 	}
 
-	// On mobile, auto_detect_interface must be disabled —
-	// PlatformInterface handles interface detection via Protect(fd).
-	if route, ok := cfg["route"].(map[string]any); ok {
-		delete(route, "auto_detect_interface")
-	}
+	// auto_detect_interface MUST stay true on mobile.
+	// It's the master switch that enables socket protection — when PlatformInterface
+	// is set and UsePlatformAutoDetectInterfaceControl() returns true, sing-box
+	// delegates to AutoDetectInterfaceControl(fd) → VpnService.protect(fd).
+	// Without it, outbound sockets go through TUN → routing loop → all servers dead.
 
 	// Fix cache_file path — Android root is read-only.
 	if exp, ok := cfg["experimental"].(map[string]any); ok {

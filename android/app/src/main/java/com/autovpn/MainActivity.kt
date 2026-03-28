@@ -49,7 +49,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var svcGithub: TextView
 
     private var isConnected = false
-    private var isVerifying = false
     private var connectedSince = 0L
     private var totalDown = 0L
     private var totalUp = 0L
@@ -150,32 +149,32 @@ class MainActivity : AppCompatActivity() {
     // Called from Go status callback via AutoVpnService
     fun updateUI(state: Long, server: String, delayMs: Long, alive: Long, total: Long, error: String) {
         when (state) {
-            1L -> { // Fetching
+            1L -> { // Fetching + pre-validation (before TUN)
                 setButtonState(connecting = true)
                 statusText.text = if (server.isNotEmpty()) server else "Downloading configs..."
-                serverText.text = ""
+                if (total > 0) serverText.text = "$alive / $total alive" else serverText.text = ""
                 errorText.visibility = View.GONE
             }
-            2L -> { // Starting
+            2L -> { // Starting engine
                 statusText.text = if (server.isNotEmpty()) server else "Starting engine..."
             }
-            3L -> { // Engine connected — now verify real connectivity
+            3L -> { // Connected — servers already pre-validated
                 if (!isConnected) {
                     isConnected = true
-                    isVerifying = true
-                    statusText.text = "Verifying connection..."
-                    serverText.text = "$total servers"
-                    setButtonState(connecting = true) // stay orange until IP verified
+                    setButtonState(connected = true)
+                    connectedSince = System.currentTimeMillis()
+                    totalDown = 0; totalUp = 0
+                    handler.post(tickRunnable)
+                    errorText.visibility = View.GONE
                     fetchConfigInfo()
-                    verifyConnection(server, delayMs, alive, total)
-                } else if (isVerifying) {
-                    // Show validation progress from Go
-                    if (server.isNotEmpty()) {
-                        statusText.text = server
-                        if (total > 0) serverText.text = "$alive / $total alive"
-                    }
+                    statusText.text = if (server.isNotEmpty()) server else "Connected"
+                    serverText.text = if (total > 0) "$alive / $total servers" else ""
+                    // Check IP in background, poll servers
+                    quickVerifyIP()
+                    runServiceChecks()
+                    pollServers()
                 } else {
-                    // Normal connected updates
+                    // Normal connected updates (from pollStatus)
                     errorText.visibility = View.GONE
                     if (server.isNotEmpty()) {
                         statusText.text = "$server  ${delayMs}ms"
@@ -183,7 +182,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
-            4L -> { // Error
+            4L -> { // Error — shown without TUN (no kill switch)
                 isConnected = false
                 setButtonState(error = true)
                 statusText.text = ""
@@ -232,42 +231,11 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
-    private fun verifyConnection(server: String, delayMs: Long, alive: Long, total: Long) {
-        statusText.text = "Testing $total servers..."
+    private fun quickVerifyIP() {
         Thread {
-            android.util.Log.i("AutoVPN", "verifyConnection thread started")
-            val result = try {
-                Mobile.verifyConnection(30)
-            } catch (e: Exception) {
-                android.util.Log.e("AutoVPN", "verifyConnection FAILED", e)
-                ""
-            }
-            android.util.Log.i("AutoVPN", "verifyConnection result: $result")
-
+            val ip = try { Mobile.getExternalIP() } catch (_: Exception) { "" }
             runOnUiThread {
-                isVerifying = false
-                if (result.isNotEmpty()) {
-                    val parts = result.split(",", limit = 3)
-                    val ip = parts.getOrElse(0) { "" }
-                    val bestServer = parts.getOrElse(1) { "" }
-                    val bestDelay = parts.getOrElse(2) { "0" }.toLongOrNull() ?: 0
-
-                    ipText.text = ip
-                    setButtonState(connected = true)
-                    connectedSince = System.currentTimeMillis()
-                    totalDown = 0; totalUp = 0
-                    handler.post(tickRunnable)
-                    errorText.visibility = View.GONE
-                    statusText.text = "$bestServer  ${bestDelay}ms"
-                    serverText.text = "$alive / $total servers"
-                    runServiceChecks()
-                    pollServers()
-                } else {
-                    statusText.text = "No working servers"
-                    setButtonState(error = true)
-                    errorText.text = "All $total servers failed connectivity test. Try again later."
-                    errorText.visibility = View.VISIBLE
-                }
+                if (ip.isNotEmpty()) ipText.text = ip
             }
         }.start()
     }
@@ -275,17 +243,18 @@ class MainActivity : AppCompatActivity() {
     private fun fetchConfigInfo() {
         Thread {
             try {
-                val raw = Mobile.getConfigInfo() // "source,count,cacheAgeSec"
+                val raw = Mobile.getConfigInfo() // "source,alive,total,cacheAgeSec"
                 val parts = raw.split(",")
-                if (parts.size == 3) {
+                if (parts.size == 4) {
                     val source = parts[0]
-                    val count = parts[1]
-                    val ageSec = parts[2].toLongOrNull() ?: 0
+                    val alive = parts[1]
+                    val total = parts[2]
+                    val ageSec = parts[3].toLongOrNull() ?: 0
                     val label = when (source) {
-                        "network" -> "\u2601 $count servers (fresh)"
-                        "cache" -> "\u23F0 $count servers (cached ${formatDuration(ageSec)})"
-                        "embedded" -> "\u26A0 $count servers (built-in fallback)"
-                        else -> "$count servers"
+                        "network" -> "\u2601 $alive/$total servers (fresh)"
+                        "cache" -> "\u23F0 $alive/$total servers (cached ${formatDuration(ageSec)})"
+                        "embedded" -> "\u26A0 $alive/$total servers (built-in fallback)"
+                        else -> "$alive/$total servers"
                     }
                     runOnUiThread {
                         configSourceText.text = label

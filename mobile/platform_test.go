@@ -90,8 +90,8 @@ func TestAndroidPlatform_BooleanMethods(t *testing.T) {
 	if !p.UsePlatformDefaultInterfaceMonitor() {
 		t.Error("UsePlatformDefaultInterfaceMonitor should be true")
 	}
-	if p.UsePlatformNetworkInterfaces() {
-		t.Error("UsePlatformNetworkInterfaces should be false")
+	if !p.UsePlatformNetworkInterfaces() {
+		t.Error("UsePlatformNetworkInterfaces should be true — sing-box needs it for selectInterfaces")
 	}
 	if p.UnderNetworkExtension() {
 		t.Error("UnderNetworkExtension should be false")
@@ -339,44 +339,22 @@ func TestVerifyConnection_MockedIPAndClash(t *testing.T) {
 	if result == "" {
 		t.Fatal("VerifyConnection should succeed with mocked IP and Clash")
 	}
-	parts := strings.Split(result, ",")
-	if parts[0] != "5.6.7.8" {
-		t.Errorf("ip = %q, want 5.6.7.8", parts[0])
-	}
-	if parts[1] != "srv-0" {
-		t.Errorf("server = %q, want srv-0", parts[1])
-	}
-	if parts[2] != "77" {
-		t.Errorf("delay = %q, want 77", parts[2])
+	// VerifyConnection now returns just "ip".
+	if result != "5.6.7.8" {
+		t.Errorf("result = %q, want 5.6.7.8", result)
 	}
 }
 
-func TestVerifyConnection_AllServersDead(t *testing.T) {
-	clashSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/proxies" {
-			json.NewEncoder(w).Encode(map[string]any{
-				"proxies": map[string]any{
-					"proxy":  map[string]any{"now": "s0", "all": []string{"s0"}},
-					"s0":    map[string]any{"name": "s0"},
-				},
-			})
-			return
-		}
-		w.WriteHeader(408) // all dead
-	}))
-	defer clashSrv.Close()
-
+func TestVerifyConnection_IPUnreachable(t *testing.T) {
 	reset()
-	mu.Lock()
-	mgr = &app.Manager{
-		ClashAPI: &engine.ClashAPIClient{BaseURL: clashSrv.URL},
-		Engine:   &engine.Engine{},
-	}
-	mu.Unlock()
+	// Point IP check at unreachable endpoint to simulate no connectivity.
+	old := ipCheckURL
+	ipCheckURL = "http://127.0.0.1:1"
+	defer func() { ipCheckURL = old }()
 
 	result := VerifyConnection(5)
 	if result != "" {
-		t.Errorf("should be empty when all servers dead, got %q", result)
+		t.Errorf("should be empty when IP check fails, got %q", result)
 	}
 }
 

@@ -4,14 +4,16 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"syscall"
 	"unsafe"
 
 	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/option"
+	C "github.com/sagernet/sing-box/constant"
 	sbLog "github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	tun "github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/control"
 	"github.com/sagernet/sing/common/logger"
@@ -72,10 +74,12 @@ func (p *androidPlatform) AutoDetectInterfaceControl(fd int) error {
 		log.Println("[autovpn] AutoDetectInterfaceControl: vpn is nil!")
 		return os.ErrPermission
 	}
-	if p.vpn.Protect(int32(fd)) {
-		return nil
+	ok := p.vpn.Protect(int32(fd))
+	if !ok {
+		log.Printf("[autovpn] Protect(fd=%d) FAILED", fd)
+		return os.ErrPermission
 	}
-	return os.ErrPermission
+	return nil
 }
 
 func (p *androidPlatform) UsePlatformInterface() bool {
@@ -132,6 +136,7 @@ func (p *androidPlatform) UsePlatformDefaultInterfaceMonitor() bool {
 }
 
 func (p *androidPlatform) CreateDefaultInterfaceMonitor(l logger.Logger) tun.DefaultInterfaceMonitor {
+	log.Printf("[autovpn] CreateDefaultInterfaceMonitor: name=%q idx=%d", p.netIfName, p.netIfIndex)
 	return &androidInterfaceMonitor{
 		platform:   p,
 		netIfName:  p.netIfName,
@@ -140,11 +145,28 @@ func (p *androidPlatform) CreateDefaultInterfaceMonitor(l logger.Logger) tun.Def
 }
 
 func (p *androidPlatform) UsePlatformNetworkInterfaces() bool {
-	return false
+	return true
 }
 
 func (p *androidPlatform) NetworkInterfaces() ([]adapter.NetworkInterface, error) {
-	return nil, nil
+	if p.netIfName == "" || p.netIfIndex == 0 {
+		return nil, nil
+	}
+	ifType := C.InterfaceTypeWIFI
+	if p.netIfName != "" && p.netIfName != "wlan0" {
+		ifType = C.InterfaceTypeCellular
+	}
+	return []adapter.NetworkInterface{
+		{
+			Interface: control.Interface{
+				Index: p.netIfIndex,
+				Name:  p.netIfName,
+				MTU:   1500,
+				Flags: net.FlagUp | net.FlagRunning | net.FlagMulticast,
+			},
+			Type: ifType,
+		},
+	}, nil
 }
 
 // androidInterfaceMonitor provides the default network interface.
@@ -158,12 +180,28 @@ type androidInterfaceMonitor struct {
 }
 
 func (m *androidInterfaceMonitor) Start() error {
+	log.Printf("[autovpn] InterfaceMonitor.Start: name=%q idx=%d", m.netIfName, m.netIfIndex)
 	if m.netIfName != "" && m.netIfIndex > 0 {
 		m.defaultIf = &control.Interface{
 			Index: m.netIfIndex,
 			Name:  m.netIfName,
 			MTU:   1500,
 		}
+		log.Printf("[autovpn] InterfaceMonitor: default interface set to %s (idx %d)", m.netIfName, m.netIfIndex)
+		// Populate NetworkManager.networkInterfaces — required by selectInterfaces
+		// in the dialer. Without this, all connections fail with "no available network interface".
+		// Official SFA calls this from libbox/monitor.go; we call it here on startup.
+		if m.platform.networkManager != nil {
+			if err := m.platform.networkManager.UpdateInterfaces(); err != nil {
+				log.Printf("[autovpn] InterfaceMonitor: UpdateInterfaces failed: %v", err)
+			}
+		}
+		// Fire callbacks so NetworkManager logs the default interface.
+		for element := m.callbacks.Front(); element != nil; element = element.Next() {
+			element.Value(m.defaultIf, 0)
+		}
+	} else {
+		log.Println("[autovpn] InterfaceMonitor: WARNING no default interface — name or index missing")
 	}
 	return nil
 }
@@ -171,6 +209,9 @@ func (m *androidInterfaceMonitor) Start() error {
 func (m *androidInterfaceMonitor) Close() error { return nil }
 
 func (m *androidInterfaceMonitor) DefaultInterface() *control.Interface {
+	if m.defaultIf == nil {
+		log.Println("[autovpn] DefaultInterface: returning NIL — this will cause 'no available network interface'")
+	}
 	return m.defaultIf
 }
 

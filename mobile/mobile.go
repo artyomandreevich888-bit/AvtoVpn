@@ -38,6 +38,9 @@ type VPNService interface {
 	Protect(fd int32) bool
 }
 
+// TestSkipPreValidate disables TCP pre-validation in tests with fake hostnames.
+var TestSkipPreValidate bool
+
 var (
 	mu       sync.Mutex
 	mgr      *app.Manager
@@ -47,6 +50,8 @@ var (
 	// preparedConfig holds config JSON between Prepare() and Start().
 	preparedConfig      []byte
 	preparedServerCount int
+	preparedAliveCount  int
+	preparedTotalCount  int
 	preparedSource      string // "network", "cache", "embedded"
 	preparedCacheAge    int64  // seconds
 	prepared            bool
@@ -107,6 +112,7 @@ func Prepare(cacheDir string, listener StatusListener) ([]byte, error) {
 		notify(StateFetching, fmt.Sprintf("Source %d/%d (%d servers)", current, total, servers), 0, 0, 0, "")
 	}
 	mgr = app.NewManager(fetcher)
+	mgr.SkipPreValidate = TestSkipPreValidate
 	mgr.OnChange(func(s app.Status) {
 		notify(stateToInt(s.State), s.Server, s.Delay, s.AliveCount, s.TotalCount, s.Error)
 	})
@@ -135,11 +141,13 @@ func Prepare(cacheDir string, listener StatusListener) ([]byte, error) {
 
 	preparedConfig = patched
 	preparedServerCount = count
+	preparedAliveCount = meta.AliveCount
+	preparedTotalCount = meta.TotalCount
 	preparedSource = meta.Source
 	preparedCacheAge = meta.CacheAge
 	prepared = true
 
-	log.Printf("[autovpn] Prepare: OK, %d servers, %d bytes config", count, len(patched))
+	log.Printf("[autovpn] Prepare: OK, %d/%d alive servers, %d bytes config", meta.AliveCount, meta.TotalCount, len(patched))
 	mu.Unlock()
 	return patched, nil
 }
@@ -238,12 +246,12 @@ func CheckServices() string {
 	return ""
 }
 
-// GetConfigInfo returns config source metadata as "source,serverCount,cacheAgeSec".
+// GetConfigInfo returns config source metadata as "source,aliveCount,totalCount,cacheAgeSec".
 // source is "network", "cache", or "embedded".
 func GetConfigInfo() string {
 	mu.Lock()
 	defer mu.Unlock()
-	return fmt.Sprintf("%s,%d,%d", preparedSource, preparedServerCount, preparedCacheAge)
+	return fmt.Sprintf("%s,%d,%d,%d", preparedSource, preparedAliveCount, preparedTotalCount, preparedCacheAge)
 }
 
 // GetServerList returns per-server status as lines: "name,delay_ms,alive,active\n..."
@@ -363,67 +371,27 @@ func ValidateServers(concurrency int) string {
 	return b.String()
 }
 
-// VerifyConnection validates servers in parallel, picks the best one,
-// switches to it, then fetches external IP to confirm.
-// Returns "ip,server,delay" on success, empty on failure.
+// VerifyConnection checks that VPN is working by fetching external IP.
+// Servers are already pre-validated during Prepare (before TUN).
+// Returns "ip" on success, empty on failure.
 func VerifyConnection(concurrency int) string {
-	log.Printf("[autovpn] VerifyConnection called, concurrency=%d", concurrency)
-	mu.Lock()
-	m := mgr
-	mu.Unlock()
-	if m == nil || m.ClashAPI == nil {
-		return ""
-	}
-
-	// Phase 1: validate all servers in parallel with progress
-	log.Println("[autovpn] VerifyConnection: starting validation")
-	notify(StateConnected, "Testing servers...", 0, 0, 0, "")
-	results, err := m.ClashAPI.ValidateAllProxies(
-		context.Background(),
-		concurrency,
-		"http://1.1.1.1/cdn-cgi/trace",
-		3000,
-		func(done, total, alive int) {
-			notify(StateConnected, fmt.Sprintf("Testing %d/%d (%d alive)", done, total, alive), 0, alive, total, "")
-		},
-	)
-	if err != nil {
-		log.Printf("[autovpn] VerifyConnection: validation error: %v", err)
-		return ""
-	}
-	log.Printf("[autovpn] VerifyConnection: validation done, %d results", len(results))
-
-	// Find best alive server
-	bestName := ""
-	bestDelay := 999999
-	for _, r := range results {
-		if r.Alive && r.Delay < bestDelay {
-			bestDelay = r.Delay
-			bestName = r.Name
-		}
-	}
-	if bestName == "" {
-		return "" // no alive servers
-	}
-
-	// Switch to best server
-	notify(StateConnected, fmt.Sprintf("Switching to %s (%dms)...", bestName, bestDelay), 0, 0, 0, "")
-	m.ClashAPI.SelectProxy(context.Background(), "proxy", bestName)
-
-	// Phase 2: verify real connectivity with external IP
+	log.Println("[autovpn] VerifyConnection: checking external IP")
 	notify(StateConnected, "Verifying IP...", 0, 0, 0, "")
+
 	client := &http.Client{Timeout: 10 * time.Second}
 	ip := getExternalIPWith(client)
 	if ip == "" {
-		notify(StateStarting, "Retrying IP check...", 0, 0, 0, "")
+		log.Println("[autovpn] VerifyConnection: first IP check failed, retrying")
 		time.Sleep(2 * time.Second)
 		ip = getExternalIPWith(client)
 	}
 	if ip == "" {
+		log.Println("[autovpn] VerifyConnection: IP check failed")
 		return ""
 	}
 
-	return fmt.Sprintf("%s,%s,%d", ip, bestName, bestDelay)
+	log.Printf("[autovpn] VerifyConnection: IP = %s", ip)
+	return ip
 }
 
 var (

@@ -15,6 +15,10 @@ import (
 	"github.com/mewmewmemw/autovpn/internal/engine"
 )
 
+func init() {
+	TestSkipPreValidate = true
+}
+
 // vlessLine returns a valid VLESS+Reality URI for testing.
 func vlessLine(host string) string {
 	return fmt.Sprintf("vless://test-uuid@%s:443?security=reality&type=tcp&fp=chrome&pbk=testkey&sid=aa#%s", host, host)
@@ -258,8 +262,8 @@ func TestGetConfigInfo_AfterPrepare(t *testing.T) {
 
 	info := GetConfigInfo()
 	parts := strings.Split(info, ",")
-	if len(parts) != 3 {
-		t.Fatalf("GetConfigInfo = %q, want 3 parts", info)
+	if len(parts) != 4 {
+		t.Fatalf("GetConfigInfo = %q, want 4 parts (source,alive,total,cacheAge)", info)
 	}
 	if parts[0] != "network" && parts[0] != "embedded" {
 		t.Errorf("source = %q, want network or embedded", parts[0])
@@ -594,11 +598,16 @@ func TestValidateServers_AllDead(t *testing.T) {
 	}
 }
 
-func TestVerifyConnection_NotConnected(t *testing.T) {
+func TestVerifyConnection_IPCheckFails(t *testing.T) {
 	reset()
+	// Point IP check at unreachable endpoint to simulate no connectivity.
+	origIPURL := ipCheckURL
+	ipCheckURL = "http://127.0.0.1:1"
+	defer func() { ipCheckURL = origIPURL }()
+
 	result := VerifyConnection(10)
 	if result != "" {
-		t.Errorf("VerifyConnection when not connected = %q, want empty", result)
+		t.Errorf("VerifyConnection with failed IP check = %q, want empty", result)
 	}
 }
 
@@ -786,7 +795,12 @@ func TestVerifyConnection_ProgressStates(t *testing.T) {
 
 	result := VerifyConnection(10)
 	if result == "" {
-		t.Fatal("VerifyConnection returned empty, expected ip,server,delay")
+		t.Fatal("VerifyConnection returned empty, expected ip")
+	}
+
+	// VerifyConnection now returns just "ip" (no server/delay).
+	if result != "203.0.113.42" {
+		t.Errorf("result = %q, want 203.0.113.42", result)
 	}
 
 	entries := listener.snapshot()
@@ -803,20 +817,6 @@ func TestVerifyConnection_ProgressStates(t *testing.T) {
 		if e.state != StateConnected {
 			t.Errorf("entry[%d] unexpected state=%d, want StateConnected(3); server=%q", i, e.state, e.server)
 		}
-	}
-
-	// Verify progress callbacks had correct alive/total counts.
-	hasProgress := false
-	for _, e := range entries {
-		if e.total > 0 {
-			hasProgress = true
-			if e.total != 2 {
-				t.Errorf("progress total=%d, want 2", e.total)
-			}
-		}
-	}
-	if !hasProgress {
-		t.Error("no progress callbacks with total>0 received during validation")
 	}
 }
 
@@ -870,9 +870,9 @@ func TestPrepare_ProgressCallbacks(t *testing.T) {
 	}
 }
 
-// TestVerifyConnection_SwitchesToBestServer verifies that VerifyConnection
-// picks the server with the lowest delay and calls SelectProxy with it.
-func TestVerifyConnection_SwitchesToBestServer(t *testing.T) {
+// TestVerifyConnection_ReturnsIP verifies that VerifyConnection
+// returns just the external IP (servers are pre-validated during Prepare).
+func TestVerifyConnection_ReturnsIP(t *testing.T) {
 	// Mock IP API.
 	ipSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "198.51.100.1")
@@ -882,42 +882,7 @@ func TestVerifyConnection_SwitchesToBestServer(t *testing.T) {
 	ipCheckURL = ipSrv.URL
 	defer func() { ipCheckURL = origIPURL }()
 
-	// Track which server was selected.
-	var selectedMu sync.Mutex
-	var selectedServer string
-
-	// server-0 = 200ms, server-1 = 30ms => should pick server-1.
 	clashSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/proxies" {
-			json.NewEncoder(w).Encode(map[string]any{
-				"proxies": map[string]any{
-					"proxy": map[string]any{
-						"now": "server-0",
-						"all": []string{"server-0", "server-1"},
-					},
-					"server-0": map[string]any{"name": "server-0"},
-					"server-1": map[string]any{"name": "server-1"},
-				},
-			})
-			return
-		}
-		if r.Method == "PUT" && strings.HasPrefix(r.URL.Path, "/proxies/") {
-			var body map[string]string
-			json.NewDecoder(r.Body).Decode(&body)
-			selectedMu.Lock()
-			selectedServer = body["name"]
-			selectedMu.Unlock()
-			w.WriteHeader(204)
-			return
-		}
-		if strings.Contains(r.URL.Path, "/delay") {
-			delay := 200
-			if strings.Contains(r.URL.Path, "server-1") {
-				delay = 30
-			}
-			json.NewEncoder(w).Encode(map[string]int{"delay": delay})
-			return
-		}
 		w.WriteHeader(204)
 	}))
 	defer clashSrv.Close()
@@ -930,16 +895,9 @@ func TestVerifyConnection_SwitchesToBestServer(t *testing.T) {
 		t.Fatal("VerifyConnection returned empty")
 	}
 
-	// Must contain server-1 (lower delay).
-	if !strings.Contains(result, "server-1") {
-		t.Errorf("result = %q, want to contain server-1 (best delay)", result)
-	}
-
-	selectedMu.Lock()
-	sel := selectedServer
-	selectedMu.Unlock()
-	if sel != "server-1" {
-		t.Errorf("SelectProxy called with %q, want server-1", sel)
+	// VerifyConnection now returns just "ip".
+	if result != "198.51.100.1" {
+		t.Errorf("result = %q, want 198.51.100.1", result)
 	}
 }
 
@@ -1050,13 +1008,9 @@ func TestFullFlow_PrepareStartVerify(t *testing.T) {
 		t.Errorf("StateFetching (idx %d) appeared after StateConnected (idx %d) — wrong order", lastFetchingIdx, firstConnectedIdx)
 	}
 
-	// Result should be "ip,server,delay".
-	parts := strings.Split(result, ",")
-	if len(parts) != 3 {
-		t.Fatalf("result = %q, want 3 comma-separated parts", result)
-	}
-	if parts[0] != "10.0.0.1" {
-		t.Errorf("ip = %q, want 10.0.0.1", parts[0])
+	// Result should be just "ip".
+	if result != "10.0.0.1" {
+		t.Errorf("result = %q, want 10.0.0.1", result)
 	}
 }
 

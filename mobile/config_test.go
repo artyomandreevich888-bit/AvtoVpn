@@ -115,7 +115,7 @@ func TestPatchMobileConfig_CacheFilePath(t *testing.T) {
 	}
 }
 
-func TestPatchMobileConfig_RemovesAutoDetectInterface(t *testing.T) {
+func TestPatchMobileConfig_KeepsAutoDetectInterface(t *testing.T) {
 	raw := baseConfig()
 	// Inject auto_detect_interface into route
 	var cfg map[string]any
@@ -129,8 +129,8 @@ func TestPatchMobileConfig_RemovesAutoDetectInterface(t *testing.T) {
 	}
 	result := mustUnmarshal(t, patched)
 	route := result["route"].(map[string]any)
-	if _, exists := route["auto_detect_interface"]; exists {
-		t.Error("auto_detect_interface should be removed on mobile")
+	if route["auto_detect_interface"] != true {
+		t.Error("auto_detect_interface must stay true — it's the master switch for socket protection via PlatformInterface")
 	}
 	if route["final"] != "proxy" {
 		t.Error("other route fields should be preserved")

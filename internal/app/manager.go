@@ -35,6 +35,10 @@ type Manager struct {
 	Fetcher  *config.Fetcher
 	ClashAPI *engine.ClashAPIClient
 
+	// SkipPreValidate disables TCP pre-validation of servers.
+	// Used in tests with fake hostnames.
+	SkipPreValidate bool
+
 	mu       sync.RWMutex
 	status   Status
 	cancel   context.CancelFunc
@@ -84,8 +88,10 @@ func (m *Manager) SetCancel(cancel context.CancelFunc) {
 
 // ConfigMeta holds info about where configs came from.
 type ConfigMeta struct {
-	Source   string // "network", "cache", "embedded"
-	CacheAge int64  // seconds since cache was written
+	Source     string // "network", "cache", "embedded"
+	CacheAge  int64  // seconds since cache was written
+	AliveCount int   // servers that passed pre-validation
+	TotalCount int   // total servers before filtering
 }
 
 // PrepareConfig fetches servers and builds sing-box JSON config.
@@ -95,7 +101,9 @@ func (m *Manager) PrepareConfig(ctx context.Context) ([]byte, int, error) {
 	return configJSON, count, err
 }
 
-// PrepareConfigWithMeta is like PrepareConfig but also returns config source metadata.
+// PrepareConfigWithMeta fetches servers, pre-validates via TCP, filters to alive,
+// and builds sing-box config with only working servers (sorted by RTT).
+// Runs BEFORE TUN — network is open, no kill switch.
 func (m *Manager) PrepareConfigWithMeta(ctx context.Context) (*ConfigMeta, []byte, int, error) {
 	m.setStatus(Status{State: StateFetching})
 
@@ -105,17 +113,51 @@ func (m *Manager) PrepareConfigWithMeta(ctx context.Context) (*ConfigMeta, []byt
 		return nil, nil, 0, err
 	}
 
-	configJSON, err := config.BuildConfig(result.Configs)
+	totalCount := len(result.Configs)
+	var aliveConfigs []config.VlessConfig
+
+	if !m.SkipPreValidate {
+		// Pre-validate: TCP connect to each server (network still open, no TUN).
+		m.setStatus(Status{
+			State:  StateFetching,
+			Server: fmt.Sprintf("Testing %d servers...", totalCount),
+		})
+		alive := config.PreValidate(ctx, result.Configs, 30, 3*time.Second, func(done, total, aliveCount int) {
+			m.setStatus(Status{
+				State:      StateFetching,
+				Server:     fmt.Sprintf("Testing %d/%d (%d alive)", done, total, aliveCount),
+				AliveCount: aliveCount,
+				TotalCount: total,
+			})
+		})
+
+		if len(alive) == 0 {
+			err := fmt.Errorf("all %d servers failed connectivity test", totalCount)
+			m.setStatus(Status{State: StateError, Error: err.Error()})
+			return nil, nil, 0, err
+		}
+
+		aliveConfigs = make([]config.VlessConfig, len(alive))
+		for i, v := range alive {
+			aliveConfigs[i] = v.Config
+		}
+	} else {
+		aliveConfigs = result.Configs
+	}
+
+	configJSON, err := config.BuildConfig(aliveConfigs)
 	if err != nil {
 		m.setStatus(Status{State: StateError, Error: err.Error()})
 		return nil, nil, 0, err
 	}
 
 	meta := &ConfigMeta{
-		Source:   string(result.Source),
-		CacheAge: result.CacheAge,
+		Source:     string(result.Source),
+		CacheAge:  result.CacheAge,
+		AliveCount: len(aliveConfigs),
+		TotalCount: totalCount,
 	}
-	return meta, configJSON, len(result.Configs), nil
+	return meta, configJSON, len(aliveConfigs), nil
 }
 
 // StartEngine starts sing-box with a pre-built config.

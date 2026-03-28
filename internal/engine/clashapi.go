@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -155,7 +157,7 @@ func (c *ClashAPIClient) GetStatus(ctx context.Context) (*ServerStatus, error) {
 // TestProxyDelay tests a single proxy's latency via Clash API.
 // Returns delay in ms, 0 if timeout/error.
 func (c *ClashAPIClient) TestProxyDelay(ctx context.Context, name string, testURL string, timeoutMs int) (int, error) {
-	path := fmt.Sprintf("/proxies/%s/delay?url=%s&timeout=%d", name, testURL, timeoutMs)
+	path := fmt.Sprintf("/proxies/%s/delay?url=%s&timeout=%d", name, url.QueryEscape(testURL), timeoutMs)
 	resp, err := c.do(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return 0, err
@@ -219,6 +221,8 @@ func (c *ClashAPIClient) ValidateAllProxies(ctx context.Context, concurrency int
 				results[idx].Delay = delay
 				results[idx].Alive = true
 				atomic.AddInt64(&aliveCount, 1)
+			} else if err != nil {
+				log.Printf("[clashapi] %s: delay test failed: %v", proxyName, err)
 			}
 			d := int(atomic.AddInt64(&done, 1))
 			a := int(atomic.LoadInt64(&aliveCount))

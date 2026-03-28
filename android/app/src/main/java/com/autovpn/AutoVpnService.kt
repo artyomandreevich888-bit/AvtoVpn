@@ -51,6 +51,7 @@ class AutoVpnService : VpnService() {
         val service = this
 
         Thread {
+            var engineStarted = false
             try {
                 val statusCb = object : StatusListener {
                     override fun onStatusChanged(
@@ -63,8 +64,12 @@ class AutoVpnService : VpnService() {
                                 updateNotification(text)
                             }
                             Mobile.StateError -> {
-                                updateNotification("Error: $errorMsg")
-                                disconnect()
+                                if (engineStarted) {
+                                    // Error during active VPN — full disconnect
+                                    updateNotification("Error: $errorMsg")
+                                    disconnect()
+                                }
+                                // Error during Prepare — catch block handles cleanup
                             }
                         }
                         MainActivity.instance?.runOnUiThread {
@@ -89,11 +94,11 @@ class AutoVpnService : VpnService() {
                 } catch (_: Exception) { 0 }
                 android.util.Log.i("AutoVPN", "Default interface: $netIfName idx=$netIfIndex")
 
-                // Step 1: Fetch configs BEFORE creating TUN (network still open)
+                // Step 1: Fetch + pre-validate servers BEFORE TUN (network open).
+                // If 0 alive → throws, no TUN created, no kill switch.
                 val configJSON = Mobile.prepare(cacheDir, statusCb)
 
-                // Step 2: Create TUN — all traffic will be captured.
-                // IPv4 only — must match mobile.PatchMobileConfig (no IPv6 route).
+                // Step 2: Create TUN — only after we know we have alive servers.
                 val fd = Builder()
                     .setSession("AutoVPN")
                     .addAddress("172.19.0.1", 30)
@@ -111,11 +116,20 @@ class AutoVpnService : VpnService() {
 
                 tunFd = fd
 
-                // Step 3: Start sing-box with TUN FD and pre-fetched config
+                // Step 3: Start sing-box with TUN FD and pre-validated config
                 Mobile.start(fd.fd, configJSON, netIfName, netIfIndex, vpnBridge, statusCb)
+                engineStarted = true
             } catch (e: Exception) {
                 android.util.Log.e("AutoVPN", "Start failed", e)
-                disconnect()
+                if (engineStarted) {
+                    disconnect()
+                } else {
+                    // Prepare failed — no TUN, just clean up service
+                    try { Mobile.stop() } catch (_: Exception) {}
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                    instance = null
+                }
             }
         }.start()
     }
