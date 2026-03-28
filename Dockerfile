@@ -4,7 +4,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o /autovpn ./cmd/autovpn
+RUN CGO_ENABLED=0 go build -tags "with_utls,with_quic,with_clash_api,with_gvisor" -o /autovpn ./cmd/autovpn
 
 FROM debian:bookworm-slim
 

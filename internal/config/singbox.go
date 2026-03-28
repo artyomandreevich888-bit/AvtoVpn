@@ -44,7 +44,6 @@ func BuildConfig(servers []VlessConfig) ([]byte, error) {
 	outbounds = append(outbounds,
 		map[string]any{"type": "direct", "tag": "direct"},
 		map[string]any{"type": "block", "tag": "block"},
-		map[string]any{"type": "dns", "tag": "dns-out"},
 	)
 
 	config := map[string]any{
@@ -54,8 +53,8 @@ func BuildConfig(servers []VlessConfig) ([]byte, error) {
 		},
 		"dns": map[string]any{
 			"servers": []map[string]any{
-				{"type": "tls", "tag": "dns-remote", "server": "8.8.8.8"},
-				{"type": "local", "tag": "dns-local"},
+				{"type": "udp", "tag": "dns-remote", "server": "8.8.8.8"},
+				{"type": "udp", "tag": "dns-local", "server": "1.1.1.1"},
 			},
 			"rules": []map[string]any{
 				{"outbound": "any", "server": "dns-local"},

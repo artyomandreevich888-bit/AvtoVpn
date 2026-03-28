@@ -45,9 +45,9 @@ func TestBuildConfig_SingleServer(t *testing.T) {
 		t.Fatal("outbounds not an array")
 	}
 
-	// selector + urltest + 1 vless + direct + block + dns = 6
-	if len(outbounds) != 6 {
-		t.Errorf("got %d outbounds, want 6", len(outbounds))
+	// selector + urltest + 1 vless + direct + block = 5
+	if len(outbounds) != 5 {
+		t.Errorf("got %d outbounds, want 5", len(outbounds))
 	}
 
 	// First outbound is selector
@@ -87,9 +87,9 @@ func TestBuildConfig_MultipleServers(t *testing.T) {
 	m := mustUnmarshal(t, data)
 	outbounds := m["outbounds"].([]any)
 
-	// selector + urltest + 3 vless + direct + block + dns = 8
-	if len(outbounds) != 8 {
-		t.Errorf("got %d outbounds, want 8", len(outbounds))
+	// selector + urltest + 3 vless + direct + block = 7
+	if len(outbounds) != 7 {
+		t.Errorf("got %d outbounds, want 7", len(outbounds))
 	}
 
 	// urltest should have 3 server outbounds

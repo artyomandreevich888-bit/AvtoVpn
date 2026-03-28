@@ -2,12 +2,13 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 
 	"github.com/sagernet/sing-box"
+	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/option"
+	json "github.com/sagernet/sing/common/json"
 )
 
 type Engine struct {
@@ -24,12 +25,14 @@ func (e *Engine) Start(configJSON []byte) error {
 		return fmt.Errorf("already running")
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	ctx = include.Context(ctx)
+
 	var opts option.Options
-	if err := json.Unmarshal(configJSON, &opts); err != nil {
+	if err := json.UnmarshalContext(ctx, configJSON, &opts); err != nil {
+		cancel()
 		return fmt.Errorf("parse config: %w", err)
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
 
 	instance, err := box.New(box.Options{
 		Options: opts,
