@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // ConfigSources lists all VLESS config files to fetch and merge.
@@ -15,6 +16,11 @@ var ConfigSources = []string{
 	"https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile.txt",
 	"https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS.txt",
 	"https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS_mobile.txt",
+}
+
+// BuiltinConfigs are always included, prepended before fetched configs.
+var BuiltinConfigs = []string{
+	"vless://4c5fc6e7-0a76-4d01-b7e4-4ed0eccf5082@176.124.220.254:443?security=reality&type=tcp&headerType=&path=&host=&flow=xtls-rprx-vision&sni=www.microsoft.com&fp=chrome&pbk=SQmQRgId4gIPHgdi03ntk-CZimfs93uPWTBzCXyUlFk&sid=0123456789abcdef#Builtin-DE",
 }
 
 type Fetcher struct {
@@ -34,18 +40,45 @@ func (f *Fetcher) Fetch(ctx context.Context) ([]VlessConfig, error) {
 		client = http.DefaultClient
 	}
 
-	// Fetch all sources, merge results
+	// Fetch all sources in parallel
+	type result struct {
+		body string
+	}
+	results := make([]result, len(urls))
+	var wg sync.WaitGroup
+	for i, u := range urls {
+		wg.Add(1)
+		go func(i int, u string) {
+			defer wg.Done()
+			body, err := f.fetchURL(ctx, client, u)
+			if err == nil && strings.TrimSpace(body) != "" {
+				results[i] = result{body: body}
+			}
+		}(i, u)
+	}
+	wg.Wait()
+
 	seen := make(map[string]bool)
 	var all []VlessConfig
 	var allBodies []string
 
-	for _, u := range urls {
-		body, err := f.fetchURL(ctx, client, u)
-		if err != nil || strings.TrimSpace(body) == "" {
+	// Prepend builtin configs
+	for _, uri := range BuiltinConfigs {
+		if c, err := ParseVlessURI(uri); err == nil {
+			key := c.Host + ":" + fmt.Sprint(c.Port)
+			if !seen[key] {
+				seen[key] = true
+				all = append(all, c)
+			}
+		}
+	}
+
+	for _, r := range results {
+		if r.body == "" {
 			continue
 		}
-		allBodies = append(allBodies, body)
-		configs, _ := ParseConfigFile(body)
+		allBodies = append(allBodies, r.body)
+		configs, _ := ParseConfigFile(r.body)
 		for _, c := range configs {
 			key := c.Host + ":" + fmt.Sprint(c.Port)
 			if !seen[key] {

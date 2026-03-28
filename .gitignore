@@ -16,3 +16,8 @@ cache.db
 
 # Local config
 local.properties
+mobile.aar
+mobile-sources.jar
+android/app/build/
+android/.gradle/
+android/app/libs/mobile.aar

@@ -69,15 +69,16 @@ func BuildConfig(servers []VlessConfig) ([]byte, error) {
 
 	config := map[string]any{
 		"log": map[string]any{
-			"level":     "info",
+			"level":     "debug",
 			"timestamp": true,
 		},
 		"dns": map[string]any{
 			"servers": []map[string]any{
 				{
-					"type":   "udp",
+					"type":   "tls",
 					"tag":    "dns-remote",
 					"server": "8.8.8.8",
+					"detour": "proxy",
 				},
 			},
 			"final": "dns-remote",
@@ -89,7 +90,7 @@ func BuildConfig(servers []VlessConfig) ([]byte, error) {
 				"address":      []string{"172.19.0.1/30", "fdfe:dcba:9876::1/126"},
 				"auto_route":   true,
 				"strict_route": false,
-				"stack":        "mixed",
+				"stack":        "gvisor",
 			},
 		},
 		"outbounds": outbounds,
