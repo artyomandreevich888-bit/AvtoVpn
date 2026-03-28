@@ -86,8 +86,60 @@ var services = []struct {
 	{"GitHub", "https://github.com"},
 }
 
+const slowThreshold = 3000 // ms — server considered bad if YouTube > 3s
+const maxRetries = 5       // try up to 5 servers before giving up
+
 // CheckServices tests connectivity to key services through the VPN.
+// If YouTube is too slow or fails, automatically switches to next server.
 func (a *App) CheckServices() []ServiceCheck {
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		results := a.checkOnce()
+
+		// Find YouTube result
+		ytOK := false
+		for _, r := range results {
+			if r.Name == "YouTube" && r.Status == "ok" && r.Delay < slowThreshold {
+				ytOK = true
+			}
+		}
+
+		if ytOK {
+			return results
+		}
+
+		// YouTube bad — try next server
+		ctx := context.Background()
+		ps, err := a.manager.ClashAPI.GetProxies(ctx)
+		if err != nil {
+			return results
+		}
+
+		auto, ok := ps.Proxies["auto"]
+		if !ok || len(auto.All) < 2 {
+			return results
+		}
+
+		// Find current server index and pick next
+		current := auto.Now
+		nextServer := ""
+		for i, name := range auto.All {
+			if name == current && i+1 < len(auto.All) {
+				nextServer = auto.All[i+1]
+				break
+			}
+		}
+		if nextServer == "" {
+			return results // no more servers to try
+		}
+
+		// Switch via selector
+		a.manager.ClashAPI.SelectProxy(ctx, "proxy", nextServer)
+	}
+
+	return a.checkOnce()
+}
+
+func (a *App) checkOnce() []ServiceCheck {
 	client := &http.Client{Timeout: 10 * time.Second}
 	results := make([]ServiceCheck, len(services))
 
