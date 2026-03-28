@@ -19,9 +19,7 @@ var ConfigSources = []string{
 }
 
 // BuiltinConfigs are always included, prepended before fetched configs.
-var BuiltinConfigs = []string{
-	"vless://4c5fc6e7-0a76-4d01-b7e4-4ed0eccf5082@176.124.220.254:443?security=reality&type=tcp&headerType=&path=&host=&flow=xtls-rprx-vision&sni=www.microsoft.com&fp=chrome&pbk=SQmQRgId4gIPHgdi03ntk-CZimfs93uPWTBzCXyUlFk&sid=0123456789abcdef#Builtin-DE",
-}
+var BuiltinConfigs []string
 
 type Fetcher struct {
 	Client   *http.Client
