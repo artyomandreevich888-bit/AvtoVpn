@@ -10,14 +10,13 @@ func realityServer(tag string, host string) VlessConfig {
 		UUID:        "test-uuid-" + tag,
 		Host:        host,
 		Port:        443,
-		Transport:   "xhttp",
+		Transport:   "ws",
 		Security:    "reality",
 		Fingerprint: "chrome",
 		SNI:         host,
 		PublicKey:    "testPublicKeyBase64",
 		ShortID:     "abcd1234",
-		Path:        "/xhttp/",
-		Mode:        "packet-up",
+		Path:        "/ws/",
 	}
 }
 
@@ -158,10 +157,10 @@ func TestBuildConfig_VlessFields(t *testing.T) {
 
 	// Transport
 	transport := vless["transport"].(map[string]any)
-	if transport["type"] != "xhttp" {
+	if transport["type"] != "ws" {
 		t.Errorf("transport type = %v", transport["type"])
 	}
-	if transport["path"] != "/xhttp/" {
+	if transport["path"] != "/ws/" {
 		t.Errorf("transport path = %v", transport["path"])
 	}
 }

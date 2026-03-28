@@ -11,7 +11,16 @@
         <div class="logo">AutoVPN</div>
         <button id="btn" class="btn disconnected" onclick="toggle()">CONNECT</button>
         <div id="status" class="status"></div>
+        <div id="error-box" class="error-box" style="display:none" onclick="copyError()">
+            <div class="error-text" id="error-text"></div>
+            <div class="error-hint">click to copy</div>
+        </div>
         <div id="servers" class="servers"></div>
+        <div id="services" class="services">
+            <div class="svc"><span class="svc-name">YouTube</span><span class="svc-badge idle">--</span></div>
+            <div class="svc"><span class="svc-name">Instagram</span><span class="svc-badge idle">--</span></div>
+            <div class="svc"><span class="svc-name">GitHub</span><span class="svc-badge idle">--</span></div>
+        </div>
     </div>
     <script src="main.js"></script>
 </body>

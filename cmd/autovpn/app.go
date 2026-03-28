@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"net/http"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/mewmewmemw/autovpn/internal/app"
 	"github.com/mewmewmemw/autovpn/internal/config"
@@ -65,4 +68,48 @@ func (a *App) GetStatus() StatusResult {
 		TotalCount: s.TotalCount,
 		Error:      s.Error,
 	}
+}
+
+type ServiceCheck struct {
+	Name   string `json:"Name"`
+	URL    string `json:"URL"`
+	Status string `json:"Status"` // "ok", "fail", "checking"
+	Delay  int    `json:"Delay"`  // ms
+}
+
+var services = []struct {
+	Name string
+	URL  string
+}{
+	{"YouTube", "https://www.youtube.com"},
+	{"Instagram", "https://www.instagram.com"},
+	{"GitHub", "https://github.com"},
+}
+
+// CheckServices tests connectivity to key services through the VPN.
+func (a *App) CheckServices() []ServiceCheck {
+	client := &http.Client{Timeout: 10 * time.Second}
+	results := make([]ServiceCheck, len(services))
+
+	var wg sync.WaitGroup
+	for i, svc := range services {
+		results[i] = ServiceCheck{Name: svc.Name, URL: svc.URL, Status: "checking"}
+		wg.Add(1)
+		go func(idx int, url string) {
+			defer wg.Done()
+			start := time.Now()
+			resp, err := client.Head(url)
+			elapsed := int(time.Since(start).Milliseconds())
+			if err != nil || resp.StatusCode >= 500 {
+				results[idx].Status = "fail"
+				results[idx].Delay = elapsed
+				return
+			}
+			resp.Body.Close()
+			results[idx].Status = "ok"
+			results[idx].Delay = elapsed
+		}(i, svc.URL)
+	}
+	wg.Wait()
+	return results
 }

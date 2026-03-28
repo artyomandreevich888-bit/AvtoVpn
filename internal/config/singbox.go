@@ -5,6 +5,16 @@ import (
 	"fmt"
 )
 
+var supportedTransports = map[string]bool{
+	"":            true,
+	"tcp":         true,
+	"ws":          true,
+	"grpc":        true,
+	"http":        true,
+	"httpupgrade": true,
+	"quic":        true,
+}
+
 func BuildConfig(servers []VlessConfig) ([]byte, error) {
 	if len(servers) == 0 {
 		return nil, fmt.Errorf("no servers provided")
@@ -14,9 +24,20 @@ func BuildConfig(servers []VlessConfig) ([]byte, error) {
 	var vlessOutbounds []map[string]any
 
 	for i, s := range servers {
+		if !supportedTransports[s.Transport] {
+			continue
+		}
+		// Reality requires uTLS fingerprint and public key
+		if s.Security == "reality" && (s.Fingerprint == "" || s.PublicKey == "") {
+			continue
+		}
 		tag := fmt.Sprintf("server-%d", i)
 		serverTags = append(serverTags, tag)
 		vlessOutbounds = append(vlessOutbounds, buildVlessOutbound(tag, s))
+	}
+
+	if len(serverTags) == 0 {
+		return nil, fmt.Errorf("no servers with supported transports")
 	}
 
 	selectorOutbounds := append([]string{"auto"}, serverTags...)
@@ -53,11 +74,11 @@ func BuildConfig(servers []VlessConfig) ([]byte, error) {
 		},
 		"dns": map[string]any{
 			"servers": []map[string]any{
-				{"type": "udp", "tag": "dns-remote", "server": "8.8.8.8"},
-				{"type": "udp", "tag": "dns-local", "server": "1.1.1.1"},
-			},
-			"rules": []map[string]any{
-				{"outbound": "any", "server": "dns-local"},
+				{
+					"type":   "udp",
+					"tag":    "dns-remote",
+					"server": "8.8.8.8",
+				},
 			},
 			"final": "dns-remote",
 		},
@@ -67,7 +88,7 @@ func BuildConfig(servers []VlessConfig) ([]byte, error) {
 				"tag":          "tun-in",
 				"address":      []string{"172.19.0.1/30", "fdfe:dcba:9876::1/126"},
 				"auto_route":   true,
-				"strict_route": true,
+				"strict_route": false,
 				"stack":        "mixed",
 			},
 		},
@@ -114,11 +135,13 @@ func buildVlessOutbound(tag string, s VlessConfig) map[string]any {
 			"enabled":     true,
 			"server_name": s.SNI,
 		}
-		if s.Fingerprint != "" {
-			tls["utls"] = map[string]any{
-				"enabled":     true,
-				"fingerprint": s.Fingerprint,
-			}
+		fp := s.Fingerprint
+		if fp == "" {
+			fp = "chrome"
+		}
+		tls["utls"] = map[string]any{
+			"enabled":     true,
+			"fingerprint": fp,
 		}
 		if s.Security == "reality" {
 			tls["reality"] = map[string]any{
@@ -136,9 +159,6 @@ func buildVlessOutbound(tag string, s VlessConfig) map[string]any {
 		}
 		if s.Path != "" {
 			transport["path"] = s.Path
-		}
-		if s.Mode != "" {
-			transport["mode"] = s.Mode
 		}
 		out["transport"] = transport
 	}

@@ -10,22 +10,23 @@ import (
 	"strings"
 )
 
-var DefaultURLs = []string{
+// ConfigSources lists all VLESS config files to fetch and merge.
+var ConfigSources = []string{
+	"https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile.txt",
 	"https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS.txt",
-	"https://cdn.jsdelivr.net/gh/igareck/vpn-configs-for-russia@main/BLACK_VLESS_RUS.txt",
-	"https://cdn.statically.io/gh/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS.txt",
+	"https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS_mobile.txt",
 }
 
 type Fetcher struct {
 	Client   *http.Client
 	CacheDir string
-	URLs     []string
+	URLs     []string // override ConfigSources for testing
 }
 
 func (f *Fetcher) Fetch(ctx context.Context) ([]VlessConfig, error) {
 	urls := f.URLs
 	if len(urls) == 0 {
-		urls = DefaultURLs
+		urls = ConfigSources
 	}
 
 	client := f.Client
@@ -33,19 +34,30 @@ func (f *Fetcher) Fetch(ctx context.Context) ([]VlessConfig, error) {
 		client = http.DefaultClient
 	}
 
+	// Fetch all sources, merge results
+	seen := make(map[string]bool)
+	var all []VlessConfig
+	var allBodies []string
+
 	for _, u := range urls {
 		body, err := f.fetchURL(ctx, client, u)
 		if err != nil || strings.TrimSpace(body) == "" {
 			continue
 		}
-
+		allBodies = append(allBodies, body)
 		configs, _ := ParseConfigFile(body)
-		if len(configs) == 0 {
-			continue
+		for _, c := range configs {
+			key := c.Host + ":" + fmt.Sprint(c.Port)
+			if !seen[key] {
+				seen[key] = true
+				all = append(all, c)
+			}
 		}
+	}
 
-		f.writeCache(body)
-		return configs, nil
+	if len(all) > 0 {
+		f.writeCache(strings.Join(allBodies, "\n"))
+		return all, nil
 	}
 
 	// All URLs failed — try cache

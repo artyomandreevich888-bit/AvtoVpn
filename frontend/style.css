@@ -18,25 +18,25 @@ body {
 
 #app {
     text-align: center;
-    width: 300px;
+    width: 320px;
 }
 
 .logo {
     font-size: 28px;
     font-weight: 700;
     letter-spacing: 2px;
-    margin-bottom: 40px;
+    margin-bottom: 32px;
     color: #fff;
 }
 
 .btn {
-    width: 200px;
-    height: 200px;
+    width: 180px;
+    height: 180px;
     border-radius: 50%;
     border: 3px solid #333;
     background: #151520;
     color: #888;
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 600;
     letter-spacing: 2px;
     cursor: pointer;
@@ -44,13 +44,8 @@ body {
     outline: none;
 }
 
-.btn:hover {
-    border-color: #555;
-}
-
-.btn:active {
-    transform: scale(0.96);
-}
+.btn:hover { border-color: #555; }
+.btn:active { transform: scale(0.96); }
 
 .btn.connecting {
     border-color: #f0a030;
@@ -75,15 +70,104 @@ body {
 }
 
 .status {
-    margin-top: 30px;
+    margin-top: 24px;
     font-size: 15px;
     color: #aaa;
-    min-height: 24px;
+    min-height: 22px;
 }
 
 .servers {
-    margin-top: 8px;
+    margin-top: 6px;
     font-size: 13px;
     color: #666;
-    min-height: 20px;
+    min-height: 18px;
+}
+
+/* Error box */
+.error-box {
+    margin-top: 16px;
+    padding: 12px 16px;
+    background: rgba(224, 64, 64, 0.08);
+    border: 1px solid #e04040;
+    border-radius: 10px;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.2s;
+}
+
+.error-box:hover {
+    background: rgba(224, 64, 64, 0.15);
+}
+
+.error-text {
+    font-size: 12px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    color: #e08080;
+    word-break: break-all;
+    white-space: pre-wrap;
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+.error-hint {
+    margin-top: 6px;
+    font-size: 11px;
+    color: #884444;
+    text-align: right;
+}
+
+.error-box.copied .error-hint {
+    color: #30d060;
+}
+
+/* Service checks */
+.services {
+    margin-top: 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.svc {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    background: #151520;
+    border-radius: 10px;
+    border: 1px solid #222;
+    font-size: 14px;
+}
+
+.svc-name {
+    font-weight: 500;
+    color: #ccc;
+}
+
+.svc-badge {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 12px;
+}
+
+.svc-badge.ok {
+    background: rgba(48, 208, 96, 0.15);
+    color: #30d060;
+}
+
+.svc-badge.fail {
+    background: rgba(224, 64, 64, 0.15);
+    color: #e04040;
+}
+
+.svc-badge.checking {
+    background: rgba(240, 160, 48, 0.15);
+    color: #f0a030;
+    animation: pulse 1s ease-in-out infinite;
+}
+
+.svc-badge.idle {
+    background: rgba(128, 128, 128, 0.1);
+    color: #555;
 }
