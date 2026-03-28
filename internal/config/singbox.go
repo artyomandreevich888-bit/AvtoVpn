@@ -53,9 +53,9 @@ func BuildConfig(servers []VlessConfig) ([]byte, error) {
 			"type":                        "urltest",
 			"tag":                         "auto",
 			"outbounds":                   serverTags,
-			"url":                         "https://www.youtube.com/generate_204",
+			"url":                         "https://www.gstatic.com/generate_204",
 			"interval":                    "3m",
-			"tolerance":                   100,
+			"tolerance":                   500,
 			"interrupt_exist_connections": true,
 		},
 	}
