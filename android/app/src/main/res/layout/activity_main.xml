@@ -1,11 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout
+<ScrollView
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/surface">
+    android:background="#0A0A0F"
+    android:fillViewport="true">
 
+<androidx.constraintlayout.widget.ConstraintLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingBottom="32dp">
+
+    <!-- Title -->
     <TextView
         android:id="@+id/title"
         android:layout_width="wrap_content"
@@ -13,43 +20,253 @@
         android:text="@string/app_name"
         android:textSize="28sp"
         android:textStyle="bold"
-        android:layout_marginTop="120dp"
+        android:textColor="#FFFFFF"
+        android:letterSpacing="0.08"
+        android:layout_marginTop="48dp"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- Connect button -->
     <com.google.android.material.button.MaterialButton
         android:id="@+id/btn_connect"
-        android:layout_width="200dp"
-        android:layout_height="56dp"
+        android:layout_width="160dp"
+        android:layout_height="160dp"
         android:text="@string/connect"
-        android:textSize="16sp"
-        app:cornerRadius="28dp"
+        android:textSize="14sp"
+        android:textColor="#888888"
+        android:letterSpacing="0.1"
+        android:backgroundTint="#151520"
+        android:insetTop="0dp"
+        android:insetBottom="0dp"
+        app:cornerRadius="80dp"
+        app:strokeColor="#333333"
+        app:strokeWidth="3dp"
         app:layout_constraintTop_toBottomOf="@id/title"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        android:layout_marginTop="48dp" />
+        android:layout_marginTop="24dp" />
 
+    <!-- Status: server + latency -->
     <TextView
         android:id="@+id/status_text"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:textSize="14sp"
-        android:textColor="#666666"
-        android:layout_marginTop="24dp"
+        android:textSize="15sp"
+        android:textColor="#AAAAAA"
+        android:layout_marginTop="16dp"
         app:layout_constraintTop_toBottomOf="@id/btn_connect"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- Servers count -->
     <TextView
         android:id="@+id/server_text"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:textSize="13sp"
-        android:textColor="#999999"
-        android:layout_marginTop="8dp"
+        android:textColor="#666666"
+        android:layout_marginTop="2dp"
         app:layout_constraintTop_toBottomOf="@id/status_text"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- Stats row: IP | Uptime | Speed -->
+    <LinearLayout
+        android:id="@+id/stats_row"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:paddingHorizontal="24dp"
+        android:layout_marginTop="16dp"
+        app:layout_constraintTop_toBottomOf="@id/server_text">
+
+        <!-- External IP -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="@drawable/bg_service_row"
+            android:padding="10dp"
+            android:layout_marginEnd="4dp">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="IP"
+                android:textSize="10sp"
+                android:textColor="#555555" />
+            <TextView
+                android:id="@+id/ip_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="--"
+                android:textSize="12sp"
+                android:textColor="#AAAAAA"
+                android:layout_marginTop="2dp" />
+        </LinearLayout>
+
+        <!-- Uptime -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="@drawable/bg_service_row"
+            android:padding="10dp"
+            android:layout_marginHorizontal="4dp">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="UPTIME"
+                android:textSize="10sp"
+                android:textColor="#555555" />
+            <TextView
+                android:id="@+id/uptime_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="--"
+                android:textSize="12sp"
+                android:textColor="#AAAAAA"
+                android:layout_marginTop="2dp" />
+        </LinearLayout>
+
+        <!-- Speed -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="@drawable/bg_service_row"
+            android:padding="10dp"
+            android:layout_marginStart="4dp">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="SPEED"
+                android:textSize="10sp"
+                android:textColor="#555555" />
+            <TextView
+                android:id="@+id/speed_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="--"
+                android:textSize="12sp"
+                android:textColor="#AAAAAA"
+                android:layout_marginTop="2dp" />
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- Config source info -->
+    <LinearLayout
+        android:id="@+id/config_info"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:paddingHorizontal="24dp"
+        android:layout_marginTop="12dp"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/stats_row">
+
+        <TextView
+            android:id="@+id/config_source_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textSize="11sp"
+            android:textColor="#666666"
+            android:drawablePadding="4dp" />
+
+    </LinearLayout>
+
+    <!-- Service checks -->
+    <LinearLayout
+        android:id="@+id/services_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingHorizontal="24dp"
+        android:layout_marginTop="12dp"
+        app:layout_constraintTop_toBottomOf="@id/config_info">
+
+        <LinearLayout style="@style/ServiceRow">
+            <TextView style="@style/ServiceName" android:text="YouTube" />
+            <TextView android:id="@+id/svc_youtube" style="@style/ServiceBadge" android:text="--" />
+        </LinearLayout>
+
+        <LinearLayout style="@style/ServiceRow">
+            <TextView style="@style/ServiceName" android:text="Instagram" />
+            <TextView android:id="@+id/svc_instagram" style="@style/ServiceBadge" android:text="--" />
+        </LinearLayout>
+
+        <LinearLayout style="@style/ServiceRow">
+            <TextView style="@style/ServiceName" android:text="GitHub" />
+            <TextView android:id="@+id/svc_github" style="@style/ServiceBadge" android:text="--" />
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- Server list header -->
+    <LinearLayout
+        android:id="@+id/servers_header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="28dp"
+        android:paddingVertical="10dp"
+        android:layout_marginTop="12dp"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/services_container">
+
+        <TextView
+            android:id="@+id/servers_header_text"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textSize="12sp"
+            android:textColor="#666666" />
+
+        <TextView
+            android:id="@+id/servers_toggle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="SHOW"
+            android:textSize="11sp"
+            android:textColor="#30D060"
+            android:paddingHorizontal="8dp" />
+
+    </LinearLayout>
+
+    <!-- Server list (expandable) -->
+    <LinearLayout
+        android:id="@+id/servers_list"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingHorizontal="24dp"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/servers_header" />
+
+    <!-- Error box -->
+    <TextView
+        android:id="@+id/error_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone"
+        android:textSize="12sp"
+        android:fontFamily="monospace"
+        android:textColor="#E08080"
+        android:background="#14E04040"
+        android:padding="12dp"
+        android:layout_marginHorizontal="24dp"
+        android:layout_marginTop="12dp"
+        app:layout_constraintTop_toBottomOf="@id/servers_list" />
+
 </androidx.constraintlayout.widget.ConstraintLayout>
+</ScrollView>

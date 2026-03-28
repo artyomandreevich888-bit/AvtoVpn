@@ -18,6 +18,7 @@ class AutoVpnService : VpnService() {
         const val ACTION_STOP = "com.autovpn.STOP"
         const val CHANNEL_ID = "autovpn_status"
         const val NOTIFICATION_ID = 1
+        const val TUN_MTU = 9000 // must match mobile.TunMTU
         var instance: AutoVpnService? = null
     }
 
@@ -50,6 +51,7 @@ class AutoVpnService : VpnService() {
         val service = this
 
         Thread {
+            var engineStarted = false
             try {
                 val statusCb = object : StatusListener {
                     override fun onStatusChanged(
@@ -62,8 +64,12 @@ class AutoVpnService : VpnService() {
                                 updateNotification(text)
                             }
                             Mobile.StateError -> {
-                                updateNotification("Error: $errorMsg")
-                                disconnect()
+                                if (engineStarted) {
+                                    // Error during active VPN — full disconnect
+                                    updateNotification("Error: $errorMsg")
+                                    disconnect()
+                                }
+                                // Error during Prepare — catch block handles cleanup
                             }
                         }
                         MainActivity.instance?.runOnUiThread {
@@ -78,7 +84,7 @@ class AutoVpnService : VpnService() {
                     }
                 }
 
-                // Detect default network interface BEFORE TUN (while network is normal)
+                // Detect default network interface BEFORE TUN
                 val cm = getSystemService(android.net.ConnectivityManager::class.java)
                 val activeNet = cm.activeNetwork
                 val lp = if (activeNet != null) cm.getLinkProperties(activeNet) else null
@@ -88,18 +94,18 @@ class AutoVpnService : VpnService() {
                 } catch (_: Exception) { 0 }
                 android.util.Log.i("AutoVPN", "Default interface: $netIfName idx=$netIfIndex")
 
-                // Step 1: Fetch configs BEFORE creating TUN (network still open)
+                // Step 1: Fetch + pre-validate servers BEFORE TUN (network open).
+                // If 0 alive → throws, no TUN created, no kill switch.
                 val configJSON = Mobile.prepare(cacheDir, statusCb)
 
-                // Step 2: Now create TUN — all traffic will be captured
+                // Step 2: Create TUN — only after we know we have alive servers.
                 val fd = Builder()
                     .setSession("AutoVPN")
                     .addAddress("172.19.0.1", 30)
                     .addRoute("0.0.0.0", 0)
-                    .addRoute("::", 0)
                     .addDnsServer("8.8.8.8")
                     .addDnsServer("1.1.1.1")
-                    .setMtu(9000)
+                    .setMtu(TUN_MTU)
                     .establish()
 
                 if (fd == null) {
@@ -110,19 +116,29 @@ class AutoVpnService : VpnService() {
 
                 tunFd = fd
 
-                // Step 3: Start sing-box with TUN FD and pre-fetched config
+                // Step 3: Start sing-box with TUN FD and pre-validated config
                 Mobile.start(fd.fd, configJSON, netIfName, netIfIndex, vpnBridge, statusCb)
+                engineStarted = true
             } catch (e: Exception) {
                 android.util.Log.e("AutoVPN", "Start failed", e)
-                disconnect()
+                if (engineStarted) {
+                    disconnect()
+                } else {
+                    // Prepare failed — no TUN, just clean up service
+                    try { Mobile.stop() } catch (_: Exception) {}
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                    instance = null
+                }
             }
         }.start()
     }
 
     private fun disconnect() {
-        Thread {
-            try { Mobile.stop() } catch (_: Exception) {}
-        }.start()
+        // Stop Go engine SYNCHRONOUSLY before closing the TUN fd.
+        // This prevents SIGPIPE / undefined behavior from writing to a closed fd.
+        try { Mobile.stop() } catch (_: Exception) {}
+
         tunFd?.close()
         tunFd = null
         stopForeground(STOP_FOREGROUND_REMOVE)

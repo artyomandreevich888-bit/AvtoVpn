@@ -44,9 +44,9 @@ func TestBuildConfig_SingleServer(t *testing.T) {
 		t.Fatal("outbounds not an array")
 	}
 
-	// selector + urltest + 1 vless + direct + block = 5
-	if len(outbounds) != 5 {
-		t.Errorf("got %d outbounds, want 5", len(outbounds))
+	// selector + 1 vless + direct + block = 4
+	if len(outbounds) != 4 {
+		t.Errorf("got %d outbounds, want 4", len(outbounds))
 	}
 
 	// First outbound is selector
@@ -58,17 +58,11 @@ func TestBuildConfig_SingleServer(t *testing.T) {
 		t.Errorf("selector tag = %v", sel["tag"])
 	}
 	selOuts := sel["outbounds"].([]any)
-	if len(selOuts) != 2 { // "auto" + "server-0"
-		t.Errorf("selector outbounds = %d, want 2", len(selOuts))
+	if len(selOuts) != 1 { // "server-0"
+		t.Errorf("selector outbounds = %d, want 1", len(selOuts))
 	}
-	if selOuts[0] != "auto" {
-		t.Errorf("selector first outbound = %v, want auto", selOuts[0])
-	}
-
-	// Second outbound is urltest
-	ut := outbounds[1].(map[string]any)
-	if ut["type"] != "urltest" {
-		t.Errorf("second outbound type = %v, want urltest", ut["type"])
+	if selOuts[0] != "server-0" {
+		t.Errorf("selector first outbound = %v, want server-0", selOuts[0])
 	}
 }
 
@@ -86,23 +80,16 @@ func TestBuildConfig_MultipleServers(t *testing.T) {
 	m := mustUnmarshal(t, data)
 	outbounds := m["outbounds"].([]any)
 
-	// selector + urltest + 3 vless + direct + block = 7
-	if len(outbounds) != 7 {
-		t.Errorf("got %d outbounds, want 7", len(outbounds))
+	// selector + 3 vless + direct + block = 6
+	if len(outbounds) != 6 {
+		t.Errorf("got %d outbounds, want 6", len(outbounds))
 	}
 
-	// urltest should have 3 server outbounds
-	ut := outbounds[1].(map[string]any)
-	utOuts := ut["outbounds"].([]any)
-	if len(utOuts) != 3 {
-		t.Errorf("urltest outbounds = %d, want 3", len(utOuts))
-	}
-
-	// selector should have "auto" + 3 servers
+	// selector should have 3 servers directly
 	sel := outbounds[0].(map[string]any)
 	selOuts := sel["outbounds"].([]any)
-	if len(selOuts) != 4 {
-		t.Errorf("selector outbounds = %d, want 4", len(selOuts))
+	if len(selOuts) != 3 {
+		t.Errorf("selector outbounds = %d, want 3", len(selOuts))
 	}
 }
 
@@ -116,8 +103,8 @@ func TestBuildConfig_VlessFields(t *testing.T) {
 	m := mustUnmarshal(t, data)
 	outbounds := m["outbounds"].([]any)
 
-	// Third outbound (index 2) is the VLESS server
-	vless := outbounds[2].(map[string]any)
+	// Second outbound (index 1) is the VLESS server
+	vless := outbounds[1].(map[string]any)
 	if vless["type"] != "vless" {
 		t.Fatalf("outbound type = %v, want vless", vless["type"])
 	}
@@ -180,7 +167,7 @@ func TestBuildConfig_NoTransportForTCP(t *testing.T) {
 
 	m := mustUnmarshal(t, data)
 	outbounds := m["outbounds"].([]any)
-	vless := outbounds[2].(map[string]any)
+	vless := outbounds[1].(map[string]any)
 
 	if _, ok := vless["transport"]; ok {
 		t.Error("transport should be omitted for tcp/empty")
@@ -201,7 +188,7 @@ func TestBuildConfig_NoTLSForNone(t *testing.T) {
 
 	m := mustUnmarshal(t, data)
 	outbounds := m["outbounds"].([]any)
-	vless := outbounds[2].(map[string]any)
+	vless := outbounds[1].(map[string]any)
 
 	if _, ok := vless["tls"]; ok {
 		t.Error("tls should be omitted for security=none")

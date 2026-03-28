@@ -4,6 +4,4 @@
     <string name="connect">Connect</string>
     <string name="disconnect">Disconnect</string>
     <string name="connecting">Connecting…</string>
-    <string name="notification_channel">VPN Status</string>
-    <string name="notification_connected">VPN Connected</string>
 </resources>
