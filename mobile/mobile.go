@@ -202,6 +202,53 @@ func Start(tunFd int32, configJSON []byte, netIf string, netIfIndex int32, vpnSe
 	return nil
 }
 
+// BackgroundValidate tests all servers via Clash API after connection.
+// Populates delay history for the UI server list and optionally switches
+// to the best VLESS server (TCP pre-validation picks fastest by RTT,
+// but actual VLESS performance may differ).
+// Non-blocking — call from a background thread.
+func BackgroundValidate() {
+	mu.Lock()
+	m := mgr
+	mu.Unlock()
+	if m == nil || m.ClashAPI == nil {
+		return
+	}
+
+	log.Println("[autovpn] BackgroundValidate: starting Clash API validation")
+	results, err := m.ClashAPI.ValidateAllProxies(
+		context.Background(),
+		30,
+		"http://1.1.1.1/cdn-cgi/trace",
+		5000,
+	)
+	if err != nil {
+		log.Printf("[autovpn] BackgroundValidate: error: %v", err)
+		return
+	}
+
+	bestName := ""
+	bestDelay := 999999
+	var alive, dead int
+	for _, r := range results {
+		if r.Alive {
+			alive++
+			if r.Delay < bestDelay {
+				bestDelay = r.Delay
+				bestName = r.Name
+			}
+		} else {
+			dead++
+		}
+	}
+	log.Printf("[autovpn] BackgroundValidate: %d alive, %d dead, best=%s (%dms)", alive, dead, bestName, bestDelay)
+
+	// Switch to best server if different from current
+	if bestName != "" {
+		m.ClashAPI.SelectProxy(context.Background(), "proxy", bestName)
+	}
+}
+
 // Stop disconnects the VPN. Safe to call multiple times.
 func Stop() error {
 	mu.Lock()

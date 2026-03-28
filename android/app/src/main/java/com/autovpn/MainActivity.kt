@@ -169,10 +169,10 @@ class MainActivity : AppCompatActivity() {
                     fetchConfigInfo()
                     statusText.text = if (server.isNotEmpty()) server else "Connected"
                     serverText.text = if (total > 0) "$alive / $total servers" else ""
-                    // Check IP in background, poll servers
+                    // Background tasks: IP check, Clash API validation, service checks
                     quickVerifyIP()
+                    backgroundValidateServers()
                     runServiceChecks()
-                    pollServers()
                 } else {
                     // Normal connected updates (from pollStatus)
                     errorText.visibility = View.GONE
@@ -237,6 +237,16 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 if (ip.isNotEmpty()) ipText.text = ip
             }
+        }.start()
+    }
+
+    // Test all servers via Clash API in background.
+    // Populates delay history for the server list UI.
+    private fun backgroundValidateServers() {
+        Thread {
+            try { Mobile.backgroundValidate() } catch (_: Exception) {}
+            // Refresh server list after validation completes
+            runOnUiThread { if (isConnected) pollServers() }
         }.start()
     }
 
