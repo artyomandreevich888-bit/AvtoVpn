@@ -40,23 +40,12 @@ func BuildConfig(servers []VlessConfig) ([]byte, error) {
 		return nil, fmt.Errorf("no servers with supported transports")
 	}
 
-	selectorOutbounds := append([]string{"auto"}, serverTags...)
-
 	outbounds := []map[string]any{
 		{
 			"type":      "selector",
 			"tag":       "proxy",
-			"outbounds": selectorOutbounds,
-			"default":   "auto",
-		},
-		{
-			"type":                        "urltest",
-			"tag":                         "auto",
-			"outbounds":                   serverTags,
-			"url":                         "https://www.youtube.com/generate_204",
-			"interval":                    "3m",
-			"tolerance":                   100,
-			"interrupt_exist_connections": true,
+			"outbounds": serverTags,
+			"default":   serverTags[0],
 		},
 	}
 	for _, v := range vlessOutbounds {
@@ -88,7 +77,7 @@ func BuildConfig(servers []VlessConfig) ([]byte, error) {
 				"tag":          "tun-in",
 				"address":      []string{"172.19.0.1/30", "fdfe:dcba:9876::1/126"},
 				"auto_route":   true,
-				"strict_route": false,
+				"strict_route": true,
 				"stack":        "mixed",
 			},
 		},
@@ -98,6 +87,9 @@ func BuildConfig(servers []VlessConfig) ([]byte, error) {
 				{"action": "sniff"},
 				{"protocol": "dns", "action": "hijack-dns"},
 				{"ip_is_private": true, "outbound": "direct"},
+				// Route DNS traffic directly — prevents chicken-and-egg
+				// when all proxy servers are dead.
+				{"ip_cidr": []string{"8.8.8.8/32", "8.8.4.4/32", "1.1.1.1/32"}, "port": 53, "outbound": "direct"},
 			},
 			"final":                 "proxy",
 			"auto_detect_interface": true,

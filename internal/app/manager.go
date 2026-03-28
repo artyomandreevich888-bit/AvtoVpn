@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
@@ -21,12 +22,12 @@ const (
 )
 
 type Status struct {
-	State         State
-	Server        string
-	Delay         int
-	AliveCount    int
-	TotalCount    int
-	Error         string
+	State      State
+	Server     string
+	Delay      int
+	AliveCount int
+	TotalCount int
+	Error      string
 }
 
 type Manager struct {
@@ -73,48 +74,97 @@ func (m *Manager) setStatus(s Status) {
 	}
 }
 
+// SetCancel registers an external cancel function for the connection lifecycle.
+// Used by mobile to control the lifecycle from outside.
+func (m *Manager) SetCancel(cancel context.CancelFunc) {
+	m.mu.Lock()
+	m.cancel = cancel
+	m.mu.Unlock()
+}
+
+// ConfigMeta holds info about where configs came from.
+type ConfigMeta struct {
+	Source   string // "network", "cache", "embedded"
+	CacheAge int64  // seconds since cache was written
+}
+
+// PrepareConfig fetches servers and builds sing-box JSON config.
+// Mobile calls this before creating the TUN (network still open).
+func (m *Manager) PrepareConfig(ctx context.Context) ([]byte, int, error) {
+	_, configJSON, count, err := m.PrepareConfigWithMeta(ctx)
+	return configJSON, count, err
+}
+
+// PrepareConfigWithMeta is like PrepareConfig but also returns config source metadata.
+func (m *Manager) PrepareConfigWithMeta(ctx context.Context) (*ConfigMeta, []byte, int, error) {
+	m.setStatus(Status{State: StateFetching})
+
+	result, err := m.Fetcher.FetchWithMeta(ctx)
+	if err != nil {
+		m.setStatus(Status{State: StateError, Error: err.Error()})
+		return nil, nil, 0, err
+	}
+
+	configJSON, err := config.BuildConfig(result.Configs)
+	if err != nil {
+		m.setStatus(Status{State: StateError, Error: err.Error()})
+		return nil, nil, 0, err
+	}
+
+	meta := &ConfigMeta{
+		Source:   string(result.Source),
+		CacheAge: result.CacheAge,
+	}
+	return meta, configJSON, len(result.Configs), nil
+}
+
+// StartEngine starts sing-box with a pre-built config.
+// Non-blocking: sets StateStarting, launches engine in background,
+// sends StateConnected or StateError when done.
+func (m *Manager) StartEngine(ctx context.Context, configJSON []byte, serverCount int) error {
+	m.setStatus(Status{State: StateStarting, Server: fmt.Sprintf("Initializing %d servers...", serverCount)})
+
+	done := make(chan error, 1)
+	go func() { done <- m.Engine.Start(configJSON) }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			m.setStatus(Status{State: StateError, Error: err.Error()})
+			return err
+		}
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	m.setStatus(Status{
+		State:      StateConnected,
+		TotalCount: serverCount,
+	})
+
+	go m.pollStatus(ctx)
+	return nil
+}
+
+// Connect performs the full lifecycle (prepare + start). Desktop uses this.
 func (m *Manager) Connect() error {
 	if m.Engine.IsRunning() {
 		return fmt.Errorf("already connected")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	m.mu.Lock()
-	m.cancel = cancel
-	m.mu.Unlock()
+	m.SetCancel(cancel)
 
-	// Fetch configs
-	m.setStatus(Status{State: StateFetching})
-	configs, err := m.Fetcher.Fetch(ctx)
+	configJSON, count, err := m.PrepareConfig(ctx)
 	if err != nil {
 		cancel()
-		m.setStatus(Status{State: StateError, Error: err.Error()})
 		return err
 	}
 
-	// Build sing-box config
-	m.setStatus(Status{State: StateStarting})
-	configJSON, err := config.BuildConfig(configs)
-	if err != nil {
+	if err := m.StartEngine(ctx, configJSON, count); err != nil {
 		cancel()
-		m.setStatus(Status{State: StateError, Error: err.Error()})
 		return err
 	}
-
-	// Start sing-box
-	if err := m.Engine.Start(configJSON); err != nil {
-		cancel()
-		m.setStatus(Status{State: StateError, Error: err.Error()})
-		return err
-	}
-
-	m.setStatus(Status{
-		State:      StateConnected,
-		TotalCount: len(configs),
-	})
-
-	// Start polling clash_api in background
-	go m.pollStatus(ctx)
 
 	return nil
 }
@@ -163,4 +213,112 @@ func (m *Manager) pollStatus(ctx context.Context) {
 			})
 		}
 	}
+}
+
+// --- Smart server selection ---
+
+type ServiceCheck struct {
+	Name   string
+	URL    string
+	Status string // "ok", "fail", "checking"
+	Delay  int    // ms
+}
+
+// ServiceDef describes a service to check.
+type ServiceDef struct {
+	Name string
+	URL  string
+}
+
+var services = []ServiceDef{
+	{"YouTube", "https://www.youtube.com"},
+	{"Instagram", "https://www.instagram.com"},
+	{"GitHub", "https://github.com"},
+}
+
+// ExportServices returns current services list (for testing).
+func ExportServices() []ServiceDef { return services }
+
+// SetServices overrides services list (for testing).
+func SetServices(s []ServiceDef) { services = s }
+
+const (
+	SlowThreshold = 3000 // ms — server considered bad if YouTube > 3s
+	MaxRetries    = 5    // try up to 5 servers before giving up
+)
+
+// CheckServices tests connectivity to key services through the VPN.
+// If YouTube is too slow or fails, automatically switches to the next server.
+func (m *Manager) CheckServices(ctx context.Context) []ServiceCheck {
+	for attempt := 0; attempt < MaxRetries; attempt++ {
+		results := m.checkOnce(ctx)
+
+		ytOK := false
+		for _, r := range results {
+			if r.Name == "YouTube" && r.Status == "ok" && r.Delay < SlowThreshold {
+				ytOK = true
+			}
+		}
+		if ytOK {
+			return results
+		}
+
+		// YouTube bad — try next server
+		ps, err := m.ClashAPI.GetProxies(ctx)
+		if err != nil {
+			return results
+		}
+		auto, ok := ps.Proxies["auto"]
+		if !ok || len(auto.All) < 2 {
+			return results
+		}
+
+		current := auto.Now
+		nextServer := ""
+		for i, name := range auto.All {
+			if name == current && i+1 < len(auto.All) {
+				nextServer = auto.All[i+1]
+				break
+			}
+		}
+		if nextServer == "" {
+			return results
+		}
+
+		m.ClashAPI.SelectProxy(ctx, "proxy", nextServer)
+	}
+
+	return m.checkOnce(ctx)
+}
+
+func (m *Manager) checkOnce(ctx context.Context) []ServiceCheck {
+	client := &http.Client{Timeout: 10 * time.Second}
+	results := make([]ServiceCheck, len(services))
+
+	var wg sync.WaitGroup
+	for i, svc := range services {
+		results[i] = ServiceCheck{Name: svc.Name, URL: svc.URL, Status: "checking"}
+		wg.Add(1)
+		go func(idx int, url string) {
+			defer wg.Done()
+			start := time.Now()
+			req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+			if err != nil {
+				results[idx].Status = "fail"
+				return
+			}
+			resp, err := client.Do(req)
+			elapsed := int(time.Since(start).Milliseconds())
+			if err != nil || resp.StatusCode >= 500 {
+				results[idx].Status = "fail"
+				results[idx].Delay = elapsed
+				return
+			}
+			resp.Body.Close()
+			results[idx].Status = "ok"
+			results[idx].Delay = elapsed
+		}(i, svc.URL)
+	}
+	wg.Wait()
+	return results
 }
