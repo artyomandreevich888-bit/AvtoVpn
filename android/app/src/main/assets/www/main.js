@@ -666,25 +666,10 @@
         btn.className = 'servers-auto-btn' + (proxyIsAuto ? ' active' : '');
     }
 
-
-    // Server-side app check: fetch allowed.json from CDN
-    async function checkAppAllowed() {
-        try {
-            var result = await window.go.main.App.CheckAppAllowed();
-            if (result && result.allowed === false) {
-                document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0a0a1a;color:#fff;font-family:sans-serif;text-align:center;padding:20px"><div><h2 style="color:#f55;margin-bottom:16px">&#128683; Приложение заблокировано</h2><p style="color:#aaa;font-size:14px">' + (result.message || 'Обновите приложение') + '</p></div></div>';
-                return false;
-            }
-        } catch(e) {}
-        return true;
-    }
-
     // --- On startup: check autoconnect ---
     async function onAppLoad() {
         setTitle('AutoVPN \u2014 \u041e\u0442\u043a\u043b\u044e\u0447\u0435\u043d\u043e');
         loadHistory();
-        var appOk = await checkAppAllowed();
-        if (!appOk) return;
         loadAd();
         try {
             var autoConnect = await window.go.main.App.GetAutoConnect();

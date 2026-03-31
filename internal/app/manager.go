@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
+	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,10 +42,12 @@ type Manager struct {
 	// Used in tests with fake hostnames.
 	SkipPreValidate bool
 
-	mu       sync.RWMutex
-	status   Status
-	cancel   context.CancelFunc
-	onChange func(Status)
+	mu          sync.RWMutex
+	status      Status
+	cancel      context.CancelFunc
+	onChange    func(Status)
+	serverNames  map[string]string
+	killSwitch   bool
 }
 
 func NewManager(fetcher *config.Fetcher) *Manager {
@@ -52,7 +57,8 @@ func NewManager(fetcher *config.Fetcher) *Manager {
 		ClashAPI: &engine.ClashAPIClient{
 			Secret: "autovpn",
 		},
-		status: Status{State: StateDisconnected},
+		status:     Status{State: StateDisconnected},
+		killSwitch: true,
 	}
 }
 
@@ -132,24 +138,30 @@ func (m *Manager) PrepareConfigWithMeta(ctx context.Context) (*ConfigMeta, []byt
 		})
 
 		if len(alive) == 0 {
-			err := fmt.Errorf("all %d servers failed connectivity test", totalCount)
-			m.setStatus(Status{State: StateError, Error: err.Error()})
-			return nil, nil, 0, err
-		}
-
-		aliveConfigs = make([]config.VlessConfig, len(alive))
-		for i, v := range alive {
-			aliveConfigs[i] = v.Config
+			// TCP validation blocked by ISP (common in Russia) — skip filtering, use all servers
+			aliveConfigs = result.Configs
+		} else {
+			aliveConfigs = make([]config.VlessConfig, len(alive))
+			for i, v := range alive {
+				aliveConfigs[i] = v.Config
+			}
 		}
 	} else {
 		aliveConfigs = result.Configs
 	}
 
-	configJSON, err := config.BuildConfig(aliveConfigs)
+	m.mu.RLock()
+	ks := m.killSwitch
+	m.mu.RUnlock()
+	configJSON, err := config.BuildConfig(aliveConfigs, ks)
 	if err != nil {
 		m.setStatus(Status{State: StateError, Error: err.Error()})
 		return nil, nil, 0, err
 	}
+
+	m.mu.Lock()
+	m.serverNames = config.ServerNamesForConfigs(aliveConfigs)
+	m.mu.Unlock()
 
 	meta := &ConfigMeta{
 		Source:     string(result.Source),
@@ -166,17 +178,36 @@ func (m *Manager) PrepareConfigWithMeta(ctx context.Context) (*ConfigMeta, []byt
 func (m *Manager) StartEngine(ctx context.Context, configJSON []byte, serverCount int) error {
 	m.setStatus(Status{State: StateStarting, Server: fmt.Sprintf("Initializing %d servers...", serverCount)})
 
-	done := make(chan error, 1)
-	go func() { done <- m.Engine.Start(configJSON) }()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			m.setStatus(Status{State: StateError, Error: err.Error()})
-			return err
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			m.setStatus(Status{State: StateStarting, Server: fmt.Sprintf("Очистка интерфейса, попытка %d/3...", attempt+1)})
+			exec.Command("netsh", "interface", "ip", "delete", "address", "name=tun0", "addr=172.19.0.1").Run()
+			exec.Command("netsh", "interface", "delete", "interface", "name=tun0").Run()
+			time.Sleep(time.Second)
 		}
-	case <-ctx.Done():
-		return ctx.Err()
+
+		done := make(chan error, 1)
+		go func() { done <- m.Engine.Start(configJSON) }()
+
+		select {
+		case lastErr = <-done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+
+		if lastErr == nil {
+			break
+		}
+		if !strings.Contains(lastErr.Error(), "already exists") {
+			m.setStatus(Status{State: StateError, Error: lastErr.Error()})
+			return lastErr
+		}
+	}
+
+	if lastErr != nil {
+		m.setStatus(Status{State: StateError, Error: lastErr.Error()})
+		return lastErr
 	}
 
 	m.setStatus(Status{
@@ -188,8 +219,102 @@ func (m *Manager) StartEngine(ctx context.Context, configJSON []byte, serverCoun
 	return nil
 }
 
+
+
+
+// quickSelectBest tests all servers with high concurrency and short timeout,
+// then switches to the fastest one. Designed to complete in ~2-3 seconds.
+func (m *Manager) quickSelectBest(ctx context.Context) {
+	results, err := m.ClashAPI.ValidateAllProxies(ctx, 50, "https://www.gstatic.com/generate_204", 1500)
+	if err != nil {
+		return
+	}
+
+	bestDelay := 0
+	bestName := ""
+	for _, r := range results {
+		if r.Alive && (bestDelay == 0 || r.Delay < bestDelay) {
+			bestDelay = r.Delay
+			bestName = r.Name
+		}
+	}
+
+	if bestName != "" {
+		m.ClashAPI.SelectProxy(ctx, "proxy", bestName)
+	}
+}
+
+// ServerListItem holds display info for a single server.
+type ServerListItem struct {
+	Tag    string // sing-box proxy tag (e.g. server-0)
+	Name   string // display name
+	Delay  int
+	Active bool
+	Alive  bool
+}
+
+// GetServerList returns current server list with delays from ClashAPI.
+func (m *Manager) GetServerList(ctx context.Context) []ServerListItem {
+	m.mu.RLock()
+	names := m.serverNames
+	m.mu.RUnlock()
+
+	ss, err := m.ClashAPI.GetStatus(ctx)
+	if err != nil || ss == nil {
+		return nil
+	}
+
+	items := make([]ServerListItem, 0, len(ss.Servers))
+	for _, s := range ss.Servers {
+		name := s.Name
+		if names != nil {
+			if n, ok := names[s.Name]; ok {
+				name = n
+			}
+		}
+		items = append(items, ServerListItem{
+			Tag:    s.Name,
+			Name:   name,
+			Delay:  s.Delay,
+			Active: s.Active,
+			Alive:  s.Alive,
+		})
+	}
+	return items
+}
+
+
+// SetKillSwitch enables or disables kill switch (strict routing).
+func (m *Manager) SetKillSwitch(enabled bool) {
+	m.mu.Lock()
+	m.killSwitch = enabled
+	m.mu.Unlock()
+}
+
+// GetKillSwitch returns current kill switch state.
+func (m *Manager) GetKillSwitch() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.killSwitch
+}
+
+// SelectServer switches the active proxy to the given server tag.
+func (m *Manager) SelectServer(ctx context.Context, tag string) error {
+	return m.ClashAPI.SelectProxy(ctx, "proxy", tag)
+}
+
+// killConflictingVPNs stops known VPN apps that may hold the TUN interface.
+func killConflictingVPNs() {
+	conflicts := []string{"happ.exe", "nekobox.exe", "nekoray.exe", "clash.exe", "v2ray.exe", "xray.exe", "mihomo.exe"}
+	for _, proc := range conflicts {
+		exec.Command("taskkill", "/IM", proc, "/F").Run()
+	}
+	time.Sleep(500 * time.Millisecond)
+}
+
 // Connect performs the full lifecycle (prepare + start). Desktop uses this.
 func (m *Manager) Connect() error {
+	killConflictingVPNs()
 	if m.Engine.IsRunning() {
 		return fmt.Errorf("already connected")
 	}
@@ -234,13 +359,25 @@ func (m *Manager) pollStatus(ctx context.Context) {
 		return
 	}
 
+	// Quick initial selection — complete in ~2-3s, user gets best server fast
+	go m.quickSelectBest(ctx)
+
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+
+	// Periodic full re-test every 90 seconds to catch server degradation
+	retestTicker := time.NewTicker(90 * time.Second)
+	defer retestTicker.Stop()
+
+	badCount := 0 // consecutive polls with high latency
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-retestTicker.C:
+			// Background re-test — find a better server if available
+			go m.quickSelectBest(ctx)
 		case <-ticker.C:
 			ss, err := m.ClashAPI.GetStatus(ctx)
 			if err != nil {
@@ -253,6 +390,17 @@ func (m *Manager) pollStatus(ctx context.Context) {
 				AliveCount: ss.AliveCount,
 				TotalCount: ss.TotalCount,
 			})
+
+			// Auto-reselect if current server is consistently slow
+			if ss.CurrentDelay > 2500 && ss.CurrentDelay > 0 {
+				badCount++
+				if badCount >= 2 { // 2 bad polls in a row (~10s) — switch
+					badCount = 0
+					go m.quickSelectBest(ctx)
+				}
+			} else {
+				badCount = 0
+			}
 		}
 	}
 }
@@ -276,6 +424,7 @@ var services = []ServiceDef{
 	{"YouTube", "https://www.youtube.com"},
 	{"Instagram", "https://www.instagram.com"},
 	{"GitHub", "https://github.com"},
+	{"Telegram", "https://telegram.org"},
 }
 
 // ExportServices returns current services list (for testing).
@@ -328,13 +477,19 @@ func (m *Manager) CheckServices(ctx context.Context) []ServiceCheck {
 		}
 
 		m.ClashAPI.SelectProxy(ctx, "proxy", nextServer)
+		time.Sleep(2 * time.Second) // wait for new server
 	}
 
 	return m.checkOnce(ctx)
 }
 
 func (m *Manager) checkOnce(ctx context.Context) []ServiceCheck {
-	client := &http.Client{Timeout: 10 * time.Second}
+	proxyURL, _ := url.Parse("http://127.0.0.1:7890")
+	transport := &http.Transport{
+		Proxy:             http.ProxyURL(proxyURL),
+		DisableKeepAlives: true,
+	}
+	client := &http.Client{Timeout: 10 * time.Second, Transport: transport}
 	results := make([]ServiceCheck, len(services))
 
 	var wg sync.WaitGroup

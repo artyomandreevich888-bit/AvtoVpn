@@ -65,15 +65,10 @@ class AutoVpnService : VpnService() {
                             }
                             Mobile.StateError -> {
                                 if (engineStarted) {
-                                    // Error during active VPN — full disconnect
                                     updateNotification("Error: $errorMsg")
                                     disconnect()
                                 }
-                                // Error during Prepare — catch block handles cleanup
                             }
-                        }
-                        MainActivity.instance?.runOnUiThread {
-                            MainActivity.instance?.updateUI(state, server, delayMs, aliveCount, totalCount, errorMsg)
                         }
                     }
                 }
@@ -99,14 +94,17 @@ class AutoVpnService : VpnService() {
                 val configJSON = Mobile.prepare(cacheDir, statusCb)
 
                 // Step 2: Create TUN — only after we know we have alive servers.
-                val fd = Builder()
+                val prefs = getSharedPreferences("autovpn", android.content.Context.MODE_PRIVATE)
+                val killSwitchEnabled = prefs.getBoolean("kill_switch", false)
+                val builder = Builder()
                     .setSession("AutoVPN")
                     .addAddress("172.19.0.1", 30)
                     .addRoute("0.0.0.0", 0)
                     .addDnsServer("8.8.8.8")
                     .addDnsServer("1.1.1.1")
                     .setMtu(TUN_MTU)
-                    .establish()
+                if (!killSwitchEnabled) builder.allowBypass()
+                val fd = builder.establish()
 
                 if (fd == null) {
                     android.util.Log.e("AutoVPN", "Failed to establish TUN")
@@ -144,9 +142,6 @@ class AutoVpnService : VpnService() {
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
         instance = null
-        MainActivity.instance?.runOnUiThread {
-            MainActivity.instance?.updateDisconnected()
-        }
     }
 
     override fun onDestroy() {

@@ -114,14 +114,14 @@ func (c *ClashAPIClient) SelectProxy(ctx context.Context, group, name string) er
 	return nil
 }
 
-// GetStatus returns a simplified view by reading the "auto" urltest group.
+// GetStatus returns a simplified view by reading the "proxy" urltest group.
 func (c *ClashAPIClient) GetStatus(ctx context.Context) (*ServerStatus, error) {
 	ps, err := c.GetProxies(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	auto, ok := ps.Proxies["proxy"]
+	auto, ok := ps.Proxies["auto"]
 	if !ok {
 		return &ServerStatus{}, nil
 	}
@@ -130,6 +130,10 @@ func (c *ClashAPIClient) GetStatus(ctx context.Context) (*ServerStatus, error) {
 		CurrentServer: auto.Now,
 		TotalCount:    len(auto.All),
 	}
+
+	// Find best server if urltest hasn't selected one yet
+	bestDelay := 0
+	bestName := ""
 
 	// Collect per-server detail
 	for _, name := range auto.All {
@@ -144,11 +148,21 @@ func (c *ClashAPIClient) GetStatus(ctx context.Context) (*ServerStatus, error) {
 		}
 		if si.Alive {
 			status.AliveCount++
+			if bestDelay == 0 || si.Delay < bestDelay {
+				bestDelay = si.Delay
+				bestName = name
+			}
 		}
 		if si.Active {
 			status.CurrentDelay = si.Delay
 		}
 		status.Servers = append(status.Servers, si)
+	}
+
+	// urltest may not populate Now immediately — fall back to fastest known server
+	if status.CurrentServer == "" && bestName != "" {
+		status.CurrentServer = bestName
+		status.CurrentDelay = bestDelay
 	}
 
 	return status, nil
@@ -192,7 +206,7 @@ func (c *ClashAPIClient) ValidateAllProxies(ctx context.Context, concurrency int
 		return nil, err
 	}
 
-	auto, ok := ps.Proxies["proxy"]
+	auto, ok := ps.Proxies["auto"]
 	if !ok {
 		return nil, fmt.Errorf("no 'proxy' group found")
 	}

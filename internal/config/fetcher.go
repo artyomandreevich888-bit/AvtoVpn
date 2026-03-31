@@ -19,6 +19,12 @@ var ConfigSources = []string{
 	"https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS_mobile.txt",
 	// F0rc3Run — large pool (~500), we filter to reality-only (~50-90)
 	"https://raw.githubusercontent.com/F0rc3Run/F0rc3Run/refs/heads/main/splitted-by-protocol/vless.txt",
+	// mahdibland — aggregated configs from multiple sources
+	"https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/Eternity.txt",
+	// yebekhe — TVC aggregator with mixed protocols
+	"https://raw.githubusercontent.com/yebekhe/TVC/main/subscriptions/xray/base64/mix",
+	// coldwater47 — V2ray collector reality sub
+	"https://raw.githubusercontent.com/coldwater-10/V2rayCollector/main/sub/reality_sub",
 }
 
 // ConfigSource describes where configs were loaded from.
@@ -43,8 +49,8 @@ var BuiltinConfigs []string
 type Fetcher struct {
 	Client     *http.Client
 	CacheDir   string
-	URLs       []string                            // override ConfigSources for testing
-	OnProgress func(current, total, servers int)    // optional progress callback
+	URLs       []string                         // override ConfigSources for testing
+	OnProgress func(current, total, servers int) // optional progress callback
 }
 
 func (f *Fetcher) Fetch(ctx context.Context) ([]VlessConfig, error) {

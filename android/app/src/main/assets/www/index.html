@@ -2,19 +2,23 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>AutoVPN</title>
     <link rel="stylesheet" href="style.css">
+    <style>
+        body { -webkit-touch-callout: none; }
+        #compact-btn, body.compact #compact-btn { display: none !important; }
+    </style>
 </head>
 <body>
     <div id="app">
         <div class="header">
             <div class="logo">
                 <span class="logo-icon">&#x2B21;</span>
-                <span class="logo-text">AutoVPN</span><span id="ks-badge" class="ks-badge" title="Kill Switch активен">&#x1F6E1;</span>
+                <span class="logo-text">AutoVPN</span><span id="ks-badge" class="ks-badge" title="Kill Switch">&#x1F6E1;</span>
             </div>
             <div class="header-actions">
-                <button id="compact-btn" class="icon-btn" onclick="toggleCompact()" title="Компактный режим">&#9633;</button><button id="refresh-btn" class="icon-btn" onclick="refreshServers()" title="Обновить серверы">&#8635;</button>
+                <button id="refresh-btn" class="icon-btn" onclick="refreshServers()" title="Обновить">&#8635;</button>
                 <button id="theme-toggle" class="icon-btn" onclick="toggleTheme()" title="Тема">&#9728;</button>
                 <button class="icon-btn" onclick="toggleSettings()" title="Настройки">&#9881;</button>
             </div>
@@ -27,20 +31,15 @@
             <span id="ip-copy-hint" class="ip-copy-hint">&#x2398;</span><button id="ip-toggle-btn" class="ip-toggle-btn" onclick="toggleIPVisibility()" title="Показать/скрыть IP">&#x1F441;</button>
         </div>
 
-        <!-- Settings panel -->
         <div id="settings-panel" class="settings-panel" style="display:none">
             <div class="settings-title">Настройки</div>
             <label class="settings-row">
-                <span>Автозапуск при старте Windows</span>
-                <input type="checkbox" id="toggle-autostart" onchange="onAutoStartChange(this)">
-            </label>
-            <label class="settings-row">
-                <span>Kill Switch (блокировка без VPN)</span>
-                <input type="checkbox" id="toggle-killswitch" onchange="onKillSwitchChange(this)">
-            </label>
-            <label class="settings-row">
                 <span>Подключаться автоматически</span>
                 <input type="checkbox" id="toggle-autoconnect" onchange="onAutoConnectChange(this)">
+            </label>
+            <label class="settings-row">
+                <span>Kill Switch &#x1F6E1;</span>
+                <input type="checkbox" id="toggle-killswitch" onchange="onKillSwitchChange(this)">
             </label>
         </div>
 
@@ -61,7 +60,6 @@
             <div id="conn-timer" class="conn-timer" style="display:none">00:00:00</div>
         </div>
 
-        <!-- Progress bar shown during server testing -->
         <div id="progress-container" class="progress-container" style="display:none">
             <div class="progress-label">
                 <span id="progress-text">Тестирование серверов...</span>
@@ -72,7 +70,6 @@
             </div>
         </div>
 
-        <!-- Speed indicator -->
         <div id="speed-bar" class="speed-bar" style="display:none">
             <span id="speed-up" class="speed-item speed-up">&#8593; 0 B/s</span>
             <span id="speed-down" class="speed-item speed-down">&#8595; 0 B/s</span>
@@ -103,38 +100,26 @@
             <div class="services-title">Доступность сервисов</div>
             <div id="services" class="services">
                 <div class="svc" data-name="YouTube">
-                    <div class="svc-left">
-                        <div class="svc-dot idle"></div>
-                        <span class="svc-name">YouTube</span>
-                    </div>
+                    <div class="svc-left"><div class="svc-dot idle"></div><span class="svc-name">YouTube</span></div>
                     <span class="svc-badge idle">—</span>
                 </div>
                 <div class="svc" data-name="Instagram">
-                    <div class="svc-left">
-                        <div class="svc-dot idle"></div>
-                        <span class="svc-name">Instagram</span>
-                    </div>
+                    <div class="svc-left"><div class="svc-dot idle"></div><span class="svc-name">Instagram</span></div>
                     <span class="svc-badge idle">—</span>
                 </div>
                 <div class="svc" data-name="GitHub">
-                    <div class="svc-left">
-                        <div class="svc-dot idle"></div>
-                        <span class="svc-name">GitHub</span>
-                    </div>
+                    <div class="svc-left"><div class="svc-dot idle"></div><span class="svc-name">GitHub</span></div>
                     <span class="svc-badge idle">—</span>
                 </div>
                 <div class="svc" data-name="Telegram">
-                    <div class="svc-left">
-                        <div class="svc-dot idle"></div>
-                        <span class="svc-name">Telegram</span>
-                    </div>
+                    <div class="svc-left"><div class="svc-dot idle"></div><span class="svc-name">Telegram</span></div>
                     <span class="svc-badge idle">—</span>
                 </div>
             </div>
         </div>
 
 
-        <!-- Ad banner — managed via ad.json in repo -->
+        <!-- Ad banner -->
         <div id="ad-banner" class="ad-banner" style="display:none">
             <span class="ad-label" id="ad-label">Реклама</span>
             <div id="ad-media" class="ad-media" style="display:none"></div>
@@ -147,8 +132,6 @@
             </div>
             <button class="ad-close" onclick="closeAd()" title="Закрыть">&times;</button>
         </div>
-
-        <!-- Server list (collapsible) -->
         <div class="servers-section">
             <div class="servers-header" onclick="toggleServerList()">
                 <span class="servers-title">Серверы</span>
@@ -158,27 +141,23 @@
                 <div class="servers-auto-row">
                     <button class="servers-auto-btn" id="auto-btn" onclick="switchServer('auto')">&#9654; Автовыбор</button>
                 </div>
-                <div id="servers-list" class="servers-list">
-                    <div class="servers-empty">Нет данных</div>
-                </div>
+                <div id="servers-list" class="servers-list"><div class="servers-empty">Нет данных</div></div>
             </div>
         </div>
 
-        <!-- Connection history (collapsible) -->
         <div class="history-section">
             <div class="history-header" onclick="toggleHistory()">
                 <span class="history-title">История подключений</span>
                 <span id="history-arrow" class="history-arrow">&#9660;</span>
             </div>
             <div id="history-content" style="display:none">
-                <div id="history-list" class="history-list">
-                    <div class="history-empty">Нет записей</div>
-                </div>
+                <div id="history-list" class="history-list"><div class="history-empty">Нет записей</div></div>
             </div>
         </div>
     </div>
 
-        <!-- Preroll ad overlay — shown before connect if ad is active -->
+
+        <!-- Preroll ad overlay -->
         <div id="ad-preroll" class="ad-preroll" style="display:none">
             <div class="ad-preroll-inner">
                 <div class="ad-preroll-label" id="preroll-label">Реклама</div>
@@ -193,6 +172,7 @@
             </div>
         </div>
 
+    <script src="bridge.js"></script>
     <script src="main.js"></script>
 </body>
 </html>

@@ -64,6 +64,7 @@ func setListener(l StatusListener) {
 
 func notify(state int, server string, delay, alive, total int, errMsg string) {
 	log.Printf("[autovpn] notify: state=%d server=%q alive=%d total=%d err=%q", state, server, alive, total, errMsg)
+	updateLastStatus(state, server, delay, alive, total, errMsg)
 	// read lsnr under lock to avoid race
 	mu.Lock()
 	l := lsnr

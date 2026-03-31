@@ -1,9 +1,16 @@
 {
-  "visible": true,
-  "label": "Реклама",
-  "title": "Max — смотри без VPN 👀",
-  "text": "Ладно, ладно — с VPN тоже можно",
-  "button": "Смотреть",
-  "link": "https://www.max.com",
-  "color": "#0048ff"
+  "ads": [
+    {
+      "visible": false,
+      "label": "Реклама",
+      "title": "",
+      "text": "",
+      "button": "",
+      "link": "",
+      "color": "#0048ff",
+      "image_url": "",
+      "video_url": "",
+      "duration": 15
+    }
+  ]
 }

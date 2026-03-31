@@ -1,0 +1,21 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "AutoVPN",
+  "outputfilename": "AutoVPN",
+  "frontend:install": "",
+  "frontend:build": "",
+  "frontend:dev:watcher": "",
+  "frontend:dev:serverUrl": "",
+  "wailsjsdir": "./frontend",
+  "version": "2",
+  "info": {
+    "companyName": "AutoVPN",
+    "productName": "AutoVPN",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright 2024",
+    "comments": "One-button VPN"
+  },
+  "nsisType": "multiple",
+  "obfuscated": false,
+  "garbleargs": ""
+}

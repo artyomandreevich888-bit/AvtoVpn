@@ -15,7 +15,8 @@ var supportedTransports = map[string]bool{
 	"quic":        true,
 }
 
-func BuildConfig(servers []VlessConfig) ([]byte, error) {
+func BuildConfig(servers []VlessConfig, killSwitch ...bool) ([]byte, error) {
+	ks := len(killSwitch) == 0 || killSwitch[0]
 	if len(servers) == 0 {
 		return nil, fmt.Errorf("no servers provided")
 	}
@@ -40,12 +41,23 @@ func BuildConfig(servers []VlessConfig) ([]byte, error) {
 		return nil, fmt.Errorf("no servers with supported transports")
 	}
 
+	// selectorTags: auto + all individual servers (for manual override)
+	selectorTags := append([]string{"auto"}, serverTags...)
+
 	outbounds := []map[string]any{
 		{
 			"type":      "selector",
 			"tag":       "proxy",
+			"outbounds": selectorTags,
+			"default":   "auto",
+		},
+		{
+			"type":      "urltest",
+			"tag":       "auto",
 			"outbounds": serverTags,
-			"default":   serverTags[0],
+			"url":       "https://www.gstatic.com/generate_204",
+			"interval":  "30s",
+			"tolerance": 30,
 		},
 	}
 	for _, v := range vlessOutbounds {
@@ -78,8 +90,14 @@ func BuildConfig(servers []VlessConfig) ([]byte, error) {
 				"tag":          "tun-in",
 				"address":      []string{"172.19.0.1/30", "fdfe:dcba:9876::1/126"},
 				"auto_route":   true,
-				"strict_route": true,
+				"strict_route": ks,
 				"stack":        "mixed",
+			},
+			{
+				"type":              "http",
+				"tag":               "http-in",
+				"listen":            "127.0.0.1",
+				"listen_port":       7890,
 			},
 		},
 		"outbounds": outbounds,
@@ -101,8 +119,7 @@ func BuildConfig(servers []VlessConfig) ([]byte, error) {
 				"secret":              "autovpn",
 			},
 			"cache_file": map[string]any{
-				"enabled": true,
-				"path":    "cache.db",
+				"enabled": false,
 			},
 		},
 	}
@@ -157,4 +174,25 @@ func buildVlessOutbound(tag string, s VlessConfig) map[string]any {
 	}
 
 	return out
+}
+
+// ServerNamesForConfigs returns a map from sing-box tag → display name
+// using the same filtering logic as BuildConfig.
+func ServerNamesForConfigs(servers []VlessConfig) map[string]string {
+	m := make(map[string]string)
+	for i, s := range servers {
+		if !supportedTransports[s.Transport] {
+			continue
+		}
+		if s.Security == "reality" && (s.Fingerprint == "" || s.PublicKey == "") {
+			continue
+		}
+		tag := fmt.Sprintf("server-%d", i)
+		name := s.DisplayName
+		if name == "" {
+			name = s.Host
+		}
+		m[tag] = name
+	}
+	return m
 }
